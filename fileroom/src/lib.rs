@@ -8,8 +8,10 @@
 
 pub mod conventions;
 mod error;
+pub mod events;
 mod keys;
 pub mod location;
+pub mod log;
 pub mod records;
 pub mod settings;
 

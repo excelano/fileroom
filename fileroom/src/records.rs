@@ -83,6 +83,41 @@ pub enum Table {
     DisposalBatch,
 }
 
+impl Table {
+    /// The kind.
+    #[must_use]
+    pub fn kind(&self) -> Kind {
+        match self {
+            Self::Record(_) => Kind::Record,
+            Self::Hold(_) => Kind::Hold,
+            Self::Aggregation(_) => Kind::Aggregation,
+            Self::DisposalBatch => Kind::DisposalBatch,
+        }
+    }
+
+    /// The container's identifier, for the kinds that carry one here.
+    #[must_use]
+    pub fn id(&self) -> Option<&Identifier> {
+        match self {
+            Self::Record(r) => Some(&r.id),
+            Self::Hold(h) => Some(&h.id),
+            Self::Aggregation(a) => Some(&a.id),
+            Self::DisposalBatch => None,
+        }
+    }
+
+    /// The recorded head of the container's log, for the kinds that keep one.
+    #[must_use]
+    pub fn events_head(&self) -> Option<&Hash> {
+        match self {
+            Self::Record(r) => Some(&r.events_head),
+            Self::Hold(h) => Some(&h.events_head),
+            Self::Aggregation(a) => Some(&a.events_head),
+            Self::DisposalBatch => None,
+        }
+    }
+}
+
 /// A record's table (SPEC §2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
@@ -562,7 +597,8 @@ fn read_aggregation(k: &Keys<'_>) -> Result<Aggregation, Malformed> {
 ///
 /// Beyond [`read`]: the content file hashes to `fixity.content_sha256`
 /// (SPEC §2.3), every component is present and hashes as listed (§2.7), and
-/// the event log member is present (§2.8, §4.2, §5.2).
+/// the event log is present, in form, intact, and headed as the table says
+/// (§2.8, §4.2, §5.2).
 ///
 /// # Errors
 ///
@@ -572,21 +608,23 @@ pub fn check<R: Read + Seek>(c: &mut Container<R>) -> Result<Reading, Error> {
     let Reading::Table(table) = &reading else {
         return Ok(reading);
     };
-    let found = match table {
-        Table::Record(record) => check_record(record, c)?,
-        Table::Hold(_) => events_present(c, "4.2")?,
-        Table::Aggregation(_) => events_present(c, "5.2")?,
-        Table::DisposalBatch => Ok(()),
-    };
-    Ok(match found {
-        Ok(()) => reading,
-        Err(m) => Reading::Malformed(m),
-    })
+    if let Table::Record(record) = table {
+        if let Err(m) = check_members(record, c)? {
+            return Ok(Reading::Malformed(m));
+        }
+    }
+    if table.events_head().is_some() {
+        if let Err(m) = crate::events::verify(c, table)? {
+            return Ok(Reading::Malformed(m));
+        }
+    }
+    Ok(reading)
 }
 
-type Checked = Result<Result<(), Malformed>, Error>;
-
-fn check_record<R: Read + Seek>(record: &Record, c: &mut Container<R>) -> Checked {
+fn check_members<R: Read + Seek>(
+    record: &Record,
+    c: &mut Container<R>,
+) -> Result<Result<(), Malformed>, Error> {
     let content = Hash::of_reader(c.content()?)?;
     if content != record.content_sha256 {
         return Ok(Err(Malformed::new(
@@ -615,15 +653,5 @@ fn check_record<R: Read + Seek>(record: &Record, c: &mut Container<R>) -> Checke
             )));
         }
     }
-    events_present(c, "2.8")
-}
-
-fn events_present<R: Read + Seek>(c: &mut Container<R>, rule: &'static str) -> Checked {
-    match c.member(EVENTS_MEMBER) {
-        Ok(_) => Ok(Ok(())),
-        Err(slpc::Error::Member(MemberError::Missing(_))) => {
-            Ok(Err(Malformed::new(rule, EVENTS_MEMBER, "no event log")))
-        }
-        Err(e) => Err(e.into()),
-    }
+    Ok(Ok(()))
 }
