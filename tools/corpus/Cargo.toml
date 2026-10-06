@@ -1,0 +1,19 @@
+[package]
+name = "corpus"
+description = "Generate a deterministic test corpus of records, a records root, and the ground truth for evaluating them"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+fileroom.workspace = true
+clap = { version = "4.6", features = ["derive"] }
+crc32fast = "1.5"
+csv = "1.4"
+
+[dev-dependencies]
+tempfile = "3.27"
