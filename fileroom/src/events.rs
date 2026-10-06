@@ -24,7 +24,6 @@ pub const ENTRY: &str = "event";
 
 /// What an entry records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum EventType {
     /// The container became a record.
     Captured,

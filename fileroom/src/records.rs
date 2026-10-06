@@ -54,7 +54,6 @@ impl Kind {
 
 /// What reading a flyleaf for the profile table found.
 #[derive(Debug)]
-#[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum Reading {
     /// No table carries the profile: the container is unclassified.
@@ -71,7 +70,6 @@ pub enum Reading {
 
 /// A conformant profile table, by kind.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum Table {
     /// SPEC §2.
     Record(Record),

@@ -14,11 +14,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# The `fileroom` command. Off by default so a library consumer does not build clap.
+cli = ["dep:clap"]
+
+[[bin]]
+name = "fileroom"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
 slpc = { version = "0.5", features = ["fs"] }
 sha2 = "0.11"
 csv = "1.4"
 unicode-normalization = "0.1"
+clap = { version = "4.6", features = ["derive", "env"], optional = true }
 
 [dev-dependencies]
 tempfile = "3.27"
