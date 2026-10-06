@@ -7,6 +7,8 @@
 #![allow(clippy::missing_errors_doc, clippy::module_name_repetitions)]
 
 pub mod conventions;
+#[cfg(feature = "dispose")]
+pub mod dispose;
 mod error;
 pub mod events;
 mod keys;

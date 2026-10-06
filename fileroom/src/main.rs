@@ -56,6 +56,16 @@ enum Verb {
         #[command(flatten)]
         root: Root,
     },
+    /// Each record's eligibility as of a date, against the schedule in force
+    #[cfg(feature = "dispose")]
+    Evaluate {
+        #[command(flatten)]
+        root: Root,
+        /// The evaluation date; nothing reads a clock
+        #[arg(long, value_name = "DATE")]
+        as_of: String,
+        containers: Vec<PathBuf>,
+    },
 }
 
 #[derive(Args)]
@@ -79,6 +89,12 @@ fn main() -> ExitCode {
         Verb::Schedule { root, series } => schedule(&root.root, series.as_deref()),
         Verb::Register { root } => register(&root.root),
         Verb::Verify { root } => verify(&root.root),
+        #[cfg(feature = "dispose")]
+        Verb::Evaluate {
+            root,
+            as_of,
+            containers,
+        } => evaluate(&root.root, &as_of, &containers),
     };
     match outcome {
         Outcome::Ok => ExitCode::from(0),
@@ -553,5 +569,68 @@ fn verify(root: &Path) -> Outcome {
                 Some(m) => Outcome::BadInput(format!("broken at {m}")),
             }
         }
+    }
+}
+
+#[cfg(feature = "dispose")]
+fn evaluate(root: &Path, as_of: &str, paths: &[PathBuf]) -> Outcome {
+    use fileroom::dispose::{evaluate_path, Context};
+    let as_of = match fileroom::conventions::Date::parse(as_of) {
+        Ok(d) => d,
+        Err(e) => return Outcome::BadInput(e),
+    };
+    let settings = match fileroom::settings::Settings::load(root.join("settings.toml")) {
+        Ok(s) => s,
+        Err(e) => return failed(&e),
+    };
+    let store = Store::open(root.join("schedule"));
+    let version = match store.current() {
+        Ok(Some(v)) => v,
+        Ok(None) => return Outcome::BadInput("no schedule is current".into()),
+        Err(e) => return failed(&e),
+    };
+    let (schedule, _) = match store.load(&version) {
+        Ok(x) => x,
+        Err(e) => return failed(&e),
+    };
+    let context = Context {
+        schedule: &schedule,
+        schedule_version: version.as_str(),
+        settings: &settings,
+        as_of,
+    };
+    println!("as of {as_of}, schedule {version}");
+    let mut failures = 0;
+    for path in paths {
+        match evaluate_path(path, &[], context) {
+            Err(e) => {
+                failures += 1;
+                println!("{}: {e}", path.display());
+            }
+            Ok(None) => println!("{}: unclassified", path.display()),
+            Ok(Some(e)) => {
+                let reasons: Vec<String> = e
+                    .reasons
+                    .iter()
+                    .map(|r| r.detail().map_or(r.to_string(), |d| format!("{r}: {d}")))
+                    .collect();
+                let flags: Vec<String> = e.flags.iter().map(ToString::to_string).collect();
+                let earliest = e
+                    .earliest
+                    .map_or(String::new(), |d| format!("  earliest {d}"));
+                println!("{}: {}{earliest}", path.display(), e.outcome);
+                for r in reasons {
+                    println!("    {r}");
+                }
+                for f in flags {
+                    println!("    flag {f}");
+                }
+            }
+        }
+    }
+    if failures > 0 {
+        Outcome::BadInput(format!("{failures} could not be read"))
+    } else {
+        Outcome::Ok
     }
 }

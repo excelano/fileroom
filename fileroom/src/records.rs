@@ -619,6 +619,32 @@ pub fn check<R: Read + Seek>(c: &mut Container<R>) -> Result<Reading, Error> {
     Ok(reading)
 }
 
+/// Whether every listed component is a member the container holds
+/// (SPEC §2.7), without reading any of them.
+///
+/// # Errors
+///
+/// Reading the container; a verdict is the inner result.
+pub fn components_present<R: Read + Seek>(
+    record: &Record,
+    c: &mut Container<R>,
+) -> Result<Result<(), Malformed>, Error> {
+    for component in &record.components {
+        match c.member(&component.member) {
+            Ok(_) => {}
+            Err(slpc::Error::Member(MemberError::Missing(_))) => {
+                return Ok(Err(Malformed::new(
+                    "2.7",
+                    &component.member,
+                    "listed as a component and not held",
+                )))
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(Ok(()))
+}
+
 fn check_members<R: Read + Seek>(
     record: &Record,
     c: &mut Container<R>,

@@ -17,6 +17,9 @@ rust-version.workspace = true
 [features]
 # The `fileroom` command. Off by default so a library consumer does not build clap.
 cli = ["dep:clap"]
+# Eligibility, plans, destruction and recovery: the only code that deletes.
+# Off by default so a reader links nothing that can destroy.
+dispose = []
 
 [[bin]]
 name = "fileroom"

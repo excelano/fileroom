@@ -10,7 +10,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-fileroom.workspace = true
+fileroom = { workspace = true, features = ["dispose"] }
 clap = { version = "4.6", features = ["derive"] }
 crc32fast = "1.5"
 csv = "1.4"
