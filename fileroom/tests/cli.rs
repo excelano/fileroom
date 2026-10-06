@@ -34,16 +34,16 @@ fn packed(dir: &Path, case: &str) -> std::path::PathBuf {
 fn show_log_and_check_read_the_examples() {
     let dir = tempfile::tempdir().unwrap();
     let full = packed(dir.path(), "valid/full");
-    let (code, out, _) = fileroom(&["show", full.to_str().unwrap()], dir.path());
-    assert_eq!(code, 0, "{out}");
+    let (code, out, err) = fileroom(&["show", full.to_str().unwrap()], dir.path());
+    assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("kind            record"));
     assert!(out.contains("FIN-200 (triggered 2024-01-17, snapshot \"Accounts Payable\""));
     assert!(out.contains(
         "hold            01927d01-4c2e-7a3b-8d5f-1e2a3b4c5d6e (Legal, applied 2026-03-12)"
     ));
 
-    let (code, out, _) = fileroom(&["log", full.to_str().unwrap()], dir.path());
-    assert_eq!(code, 0, "{out}");
+    let (code, out, err) = fileroom(&["log", full.to_str().unwrap()], dir.path());
+    assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("hold_applied"));
     assert!(out.contains("at legal:contracts/C-4471/invoice-2024-0117.pdf.slpc"));
     assert!(out.contains("intact: 2 entries, head e6cee8ed"));
