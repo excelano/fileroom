@@ -35,3 +35,14 @@ tempfile = "3.27"
 
 [package.metadata.docs.rs]
 all-features = true
+
+[package.metadata.deb]
+maintainer = "David M. Anderson <david.anderson@excelano.com>"
+extended-description = """
+fileroom reads and verifies records kept under the Slipcase Records Profile: a record's retention state and history, the organization's retention schedule, and the disposition register, so that any of them can be checked without a license and without a vendor.
+Six verbs: show, log, check, schedule, register, and verify."""
+section = "utils"
+priority = "optional"
+depends = "libc6, libgcc-s1"
+features = ["cli"]
+license-file = ["../LICENSE", "0"]
