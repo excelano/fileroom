@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = ["fileroom"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["David M. Anderson"]
+license = "MIT"
+repository = "https://github.com/excelano/fileroom"
+rust-version = "1.88"
+
+[profile.release]
+overflow-checks = true
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

@@ -1,0 +1,5 @@
+/target
+.DS_Store
+*.swp
+ship.toml
+brief-*.md

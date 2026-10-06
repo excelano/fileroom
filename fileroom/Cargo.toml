@@ -1,0 +1,23 @@
+[package]
+name = "fileroom"
+description = "Read and verify records under the Slipcase Records Profile: records, hold matters, aggregations, the disposition register, and the retention schedule"
+homepage = "https://slipcaseformat.org/profiles/records"
+readme = "README.md"
+keywords = ["slipcase", "records", "retention", "disposition", "toml"]
+categories = ["filesystem", "encoding"]
+# The fixture-driven tests read the spec submodule, which a package does not carry.
+exclude = ["tests/"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+slpc = "0.5"
+sha2 = "0.11"
+unicode-normalization = "0.1"
+
+[package.metadata.docs.rs]
+all-features = true
