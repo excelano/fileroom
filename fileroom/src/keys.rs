@@ -36,6 +36,14 @@ impl<'a> Keys<'a> {
         Malformed::new(rule, self.path(key), problem)
     }
 
+    pub(crate) fn required_item(
+        &self,
+        rule: &'static str,
+        key: &str,
+    ) -> Result<&'a Item, Malformed> {
+        self.required(rule, key)
+    }
+
     fn required(&self, rule: &'static str, key: &str) -> Result<&'a Item, Malformed> {
         self.table
             .get(key)

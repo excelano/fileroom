@@ -57,6 +57,11 @@ pub enum Error {
     Toml(slpc::toml_edit::TomlError),
     /// A value breaks a rule of the profile.
     Malformed(Malformed),
+    /// A CSV file cannot be read or written.
+    Csv(csv::Error),
+    /// A run cannot claim a sequence because an earlier batch is unfinished
+    /// (SPEC §6.7), or a final cannot be written because one exists.
+    Refused(Refusal),
 }
 
 impl fmt::Display for Error {
@@ -66,6 +71,8 @@ impl fmt::Display for Error {
             Self::Slpc(e) => write!(f, "{e}"),
             Self::Toml(e) => write!(f, "{e}"),
             Self::Malformed(m) => write!(f, "{m}"),
+            Self::Csv(e) => write!(f, "{e}"),
+            Self::Refused(r) => write!(f, "{r}"),
         }
     }
 }
@@ -77,6 +84,43 @@ impl std::error::Error for Error {
             Self::Slpc(e) => Some(e),
             Self::Toml(e) => Some(e),
             Self::Malformed(m) => Some(m),
+            Self::Csv(e) => Some(e),
+            Self::Refused(_) => None,
+        }
+    }
+}
+
+impl From<csv::Error> for Error {
+    fn from(e: csv::Error) -> Self {
+        Self::Csv(e)
+    }
+}
+
+impl From<Refusal> for Error {
+    fn from(r: Refusal) -> Self {
+        Self::Refused(r)
+    }
+}
+
+/// Why the register refused to act (SPEC §6.7).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Refusal {
+    /// A batch is unfinished, so no sequence can be claimed until it is
+    /// recovered. Carries what the intent and journal say about it.
+    Unfinished(Box<crate::register::Unfinished>),
+    /// The final for this sequence exists: another finalizer won.
+    AlreadyFinal(u32),
+    /// A batch that is not unfinished cannot be recovered.
+    NotUnfinished(u32),
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unfinished(u) => write!(f, "{u}"),
+            Self::AlreadyFinal(n) => write!(f, "batch {n:06} is already final"),
+            Self::NotUnfinished(n) => write!(f, "batch {n:06} is not an unfinished batch"),
         }
     }
 }

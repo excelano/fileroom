@@ -79,8 +79,8 @@ pub enum Table {
     Hold(Hold),
     /// SPEC §5.
     Aggregation(Aggregation),
-    /// SPEC §6. The register module reads these.
-    DisposalBatch,
+    /// SPEC §6.
+    DisposalBatch(crate::register::Batch),
 }
 
 impl Table {
@@ -91,7 +91,7 @@ impl Table {
             Self::Record(_) => Kind::Record,
             Self::Hold(_) => Kind::Hold,
             Self::Aggregation(_) => Kind::Aggregation,
-            Self::DisposalBatch => Kind::DisposalBatch,
+            Self::DisposalBatch(_) => Kind::DisposalBatch,
         }
     }
 
@@ -102,7 +102,7 @@ impl Table {
             Self::Record(r) => Some(&r.id),
             Self::Hold(h) => Some(&h.id),
             Self::Aggregation(a) => Some(&a.id),
-            Self::DisposalBatch => None,
+            Self::DisposalBatch(_) => None,
         }
     }
 
@@ -113,7 +113,7 @@ impl Table {
             Self::Record(r) => Some(&r.events_head),
             Self::Hold(h) => Some(&h.events_head),
             Self::Aggregation(a) => Some(&a.events_head),
-            Self::DisposalBatch => None,
+            Self::DisposalBatch(_) => None,
         }
     }
 }
@@ -349,7 +349,7 @@ fn read_table(doc: &DocumentMut) -> Result<Reading, Malformed> {
         Kind::Record => Table::Record(read_record(&k)?),
         Kind::Hold => Table::Hold(read_hold(&k)?),
         Kind::Aggregation => Table::Aggregation(read_aggregation(&k)?),
-        Kind::DisposalBatch => Table::DisposalBatch,
+        Kind::DisposalBatch => Table::DisposalBatch(crate::register::read_batch(&k)?),
     }))
 }
 

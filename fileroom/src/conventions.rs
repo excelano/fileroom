@@ -100,6 +100,10 @@ impl Hash {
         }
     }
 
+    pub(crate) fn unchecked(hex: &str) -> Self {
+        Self(hex.to_owned())
+    }
+
     /// Hash bytes.
     #[must_use]
     pub fn of(bytes: &[u8]) -> Self {
@@ -161,6 +165,25 @@ impl Date {
     pub fn new(year: u16, month: u8, day: u8) -> Option<Self> {
         let d = Self { year, month, day };
         ((1..=12).contains(&month) && day >= 1 && day <= d.days_in_month()).then_some(d)
+    }
+
+    /// Read `YYYY-MM-DD`.
+    ///
+    /// # Errors
+    ///
+    /// A sentence saying what the string is not.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let wrong = || format!("{s:?} is not a date of the form YYYY-MM-DD");
+        let b = s.as_bytes();
+        if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+            return Err(wrong());
+        }
+        let part = |range: std::ops::Range<usize>| s[range].parse::<u16>().map_err(|_| wrong());
+        let (year, month, day) = (part(0..4)?, part(5..7)?, part(8..10)?);
+        let (Ok(month), Ok(day)) = (u8::try_from(month), u8::try_from(day)) else {
+            return Err(wrong());
+        };
+        Self::new(year, month, day).ok_or_else(|| format!("{s} is not a date the calendar has"))
     }
 
     /// How many days the date's month has.

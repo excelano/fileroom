@@ -13,10 +13,11 @@ mod keys;
 pub mod location;
 pub mod log;
 pub mod records;
+pub mod register;
 pub mod settings;
 
 /// The container library this crate is built on, re-exported so a caller
 /// holds the same version of the types that appear in signatures here.
 pub use slpc;
 
-pub use error::{Error, Malformed, Result};
+pub use error::{Error, Malformed, Refusal, Result};
