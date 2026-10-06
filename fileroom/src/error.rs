@@ -59,6 +59,8 @@ pub enum Error {
     Malformed(Malformed),
     /// A CSV file cannot be read or written.
     Csv(csv::Error),
+    /// A file is refused for every problem it has (SPEC §3.5).
+    Problems(Vec<Malformed>),
     /// A run cannot claim a sequence because an earlier batch is unfinished
     /// (SPEC §6.7), or a final cannot be written because one exists.
     Refused(Refusal),
@@ -72,6 +74,15 @@ impl fmt::Display for Error {
             Self::Toml(e) => write!(f, "{e}"),
             Self::Malformed(m) => write!(f, "{m}"),
             Self::Csv(e) => write!(f, "{e}"),
+            Self::Problems(list) => {
+                for (i, m) in list.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str("\n")?;
+                    }
+                    write!(f, "{m}")?;
+                }
+                Ok(())
+            }
             Self::Refused(r) => write!(f, "{r}"),
         }
     }
@@ -85,7 +96,7 @@ impl std::error::Error for Error {
             Self::Toml(e) => Some(e),
             Self::Malformed(m) => Some(m),
             Self::Csv(e) => Some(e),
-            Self::Refused(_) => None,
+            Self::Problems(_) | Self::Refused(_) => None,
         }
     }
 }

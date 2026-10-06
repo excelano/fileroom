@@ -14,6 +14,7 @@ pub mod location;
 pub mod log;
 pub mod records;
 pub mod register;
+pub mod schedule;
 pub mod settings;
 
 /// The container library this crate is built on, re-exported so a caller
