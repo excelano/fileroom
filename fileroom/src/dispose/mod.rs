@@ -8,6 +8,7 @@ pub mod certificate;
 pub mod dates;
 pub mod eligibility;
 pub mod plan;
+pub mod recover;
 pub mod run;
 
 pub use eligibility::{
@@ -15,4 +16,5 @@ pub use eligibility::{
     SeriesDue,
 };
 pub use plan::{Plan, Planned};
+pub use recover::{recover, Recovered, Recovery};
 pub use run::{dispose, Matters, Progress, RecordOutcome, Run, ScopeMatcher, Summary};

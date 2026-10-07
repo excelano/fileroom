@@ -104,6 +104,21 @@ enum Verb {
         #[arg(long, short)]
         yes: bool,
     },
+    /// Finish an unfinished batch from its journal and what is present; never deletes
+    #[cfg(feature = "dispose")]
+    Recover {
+        #[command(flatten)]
+        root: Root,
+        /// Who confirms the batch's run is no longer executing
+        #[arg(long, value_name = "EMAIL")]
+        confirmed_by: String,
+        /// That person's identifier in the organization's directory
+        #[arg(long, value_name = "ID")]
+        directory_id: String,
+        /// A rendered certificate to carry instead of the text one
+        #[arg(long, value_name = "FILE")]
+        certificate: Option<PathBuf>,
+    },
 }
 
 #[derive(Args)]
@@ -164,6 +179,18 @@ fn main() -> ExitCode {
             certificate.as_deref(),
             scope_statement,
             yes,
+        ),
+        #[cfg(feature = "dispose")]
+        Verb::Recover {
+            root,
+            confirmed_by,
+            directory_id,
+            certificate,
+        } => acting::recover(
+            &root.root,
+            confirmed_by,
+            directory_id,
+            certificate.as_deref(),
         ),
     };
     match outcome {
@@ -985,6 +1012,71 @@ mod acting {
             ))
         } else {
             Outcome::Ok
+        }
+    }
+
+    pub fn recover(
+        root: &Path,
+        confirmed_by: String,
+        directory_id: String,
+        certificate: Option<&Path>,
+    ) -> Outcome {
+        let register = fileroom::register::Register::open(root.join("register"));
+        let last = match register.last() {
+            Ok(n) => n,
+            Err(e) => return failed(&e),
+        };
+        let unfinished = match dispose::recover::describe(root, last) {
+            Ok(u) => u,
+            Err(Error::Refused(r)) => return Outcome::Refused(format!("{r}: nothing to recover")),
+            Err(e) => return failed(&e),
+        };
+        let settings = match Settings::load(root.join("settings.toml")) {
+            Ok(s) => s,
+            Err(e) => return failed(&e),
+        };
+        let certificate = match certificate {
+            None => None,
+            Some(path) => match std::fs::read(path) {
+                Ok(bytes) => Some((
+                    path.file_name().map_or("certificate".to_owned(), |n| {
+                        n.to_string_lossy().into_owned()
+                    }),
+                    bytes,
+                )),
+                Err(e) => return Outcome::BadInput(format!("{}: {e}", path.display())),
+            },
+        };
+        println!("{unfinished}");
+        println!("Recovery finishes this batch from its journal and from what is present now. It destroys nothing.");
+        print!("Confirm that this batch's run is no longer executing on any machine. Type yes to continue: ");
+        std::io::stdout().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).ok();
+        if answer.trim() != "yes" {
+            return Outcome::Refused("not confirmed".into());
+        }
+        let recovery = dispose::Recovery {
+            root,
+            sequence: last,
+            confirmed_by: fileroom::conventions::Agent {
+                email: confirmed_by,
+                id: directory_id,
+            },
+            component: format!("fileroom {}", env!("CARGO_PKG_VERSION")),
+            settings: &settings,
+            certificate,
+        };
+        match dispose::recover(&recovery, &mut dispose::run::utc_now) {
+            Ok(r) => {
+                println!(
+                    "batch {:06} final by recovery: {} outcomes from the journal, {} present and not attempted, {} unknown",
+                    r.sequence, r.journaled, r.present, r.unknown
+                );
+                Outcome::Ok
+            }
+            Err(Error::Refused(r)) => Outcome::Refused(r.to_string()),
+            Err(e) => failed(&e),
         }
     }
 }
