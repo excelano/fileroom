@@ -862,7 +862,7 @@ impl Register {
         }
         file.seek(std::io::SeekFrom::Start(before as u64))?;
         file.write_all(&log.bytes()[before..])?;
-        file.sync_all()?;
+        flush(&file)?;
         Ok(head)
     }
 
@@ -1148,6 +1148,26 @@ fn final_flyleaf(
     doc
 }
 
+/// Push a file's bytes to the device where the file system allows it. An
+/// SMB mount may not implement the full flush, and the write already
+/// reached the server, so an unsupported flush is not a failure.
+fn flush(file: &File) -> std::io::Result<()> {
+    match file.sync_all() {
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported || e.raw_os_error() == Some(45) => {
+            match file.sync_data() {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::Unsupported
+                        || e.raw_os_error() == Some(45) =>
+                {
+                    Ok(())
+                }
+                other => other,
+            }
+        }
+        other => other,
+    }
+}
+
 fn count(n: u64) -> Item {
     Item::Value(Value::from(i64::try_from(n).unwrap_or(i64::MAX)))
 }
@@ -1175,6 +1195,6 @@ fn write_batch(
     Repack::new(Cursor::new(packed.into_inner()))
         .member(MANIFEST_MEMBER, Cursor::new(manifest))
         .write(&mut *file)?;
-    file.sync_all()?;
+    flush(file)?;
     Ok(())
 }
