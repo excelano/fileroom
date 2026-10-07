@@ -7,7 +7,7 @@ use std::io::{Cursor, Read};
 
 use common::{examples, pack};
 use fileroom::conventions::{Agent, Date, Hash, Instant};
-use fileroom::events::{self, EventType, NewEvent, Step};
+use fileroom::events::{self, EventType, MemberChange, NewEvent, Step};
 use fileroom::location::Location;
 use fileroom::records::{self, Kind, New, Reading, Table, EVENTS_MEMBER};
 use fileroom::slpc::toml_edit::{DocumentMut, InlineTable, Item, Value};
@@ -425,4 +425,106 @@ fn no_steps_is_refused_and_a_decision_outside_the_three_is_refused() {
         matches!(&err, Error::Malformed(m) if m.rule == "2.8" && m.key == "detail.decision"),
         "{err:?}"
     );
+}
+
+fn component_event(r#type: EventType, member: &str, sha256: &str) -> NewEvent {
+    let mut e = hold_applied();
+    e.r#type = r#type;
+    let mut detail = InlineTable::new();
+    detail.insert("member", Value::from(member));
+    detail.insert("sha256", Value::from(sha256));
+    if r#type == EventType::ComponentRemoved {
+        detail.insert("reason", Value::from("duplicate"));
+    }
+    e.detail = Some(detail);
+    e
+}
+
+fn checked(bytes: Vec<u8>) -> (records::Record, Vec<String>) {
+    let mut c = Container::read(Cursor::new(bytes)).unwrap();
+    let names = c.member_names();
+    match records::check(&mut c).unwrap() {
+        Reading::Table(Table::Record(r)) => (r, names),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn members_change_in_the_same_repack_as_the_entry_that_records_them() {
+    let minimal = pack(&examples().join("valid/minimal"));
+    let member = "records/components/01-receipt.txt";
+    let body = b"receipt".to_vec();
+    let sha = Hash::of(&body);
+    let listed = sha.clone();
+    let list = move |doc: &mut DocumentMut| {
+        let mut t = fileroom::slpc::toml_edit::Table::new();
+        t.insert("member", Item::Value(Value::from(member)));
+        t.insert("filename", Item::Value(Value::from("receipt.txt")));
+        t.insert("mime_type", Item::Value(Value::from("text/plain")));
+        t.insert("size", Item::Value(Value::from(7)));
+        t.insert("sha256", Item::Value(Value::from(listed.as_str())));
+        let mut list = fileroom::slpc::toml_edit::ArrayOfTables::new();
+        list.push(t);
+        doc["records"]["components"] = Item::ArrayOfTables(list);
+        Ok(())
+    };
+    let mut out = Cursor::new(Vec::new());
+    events::append_steps(
+        &mut Cursor::new(minimal),
+        &mut out,
+        vec![Step::new(
+            list,
+            component_event(EventType::ComponentAdded, member, sha.as_str()),
+        )
+        .with_members(vec![MemberChange::Set(
+            member.into(),
+            Box::new(Cursor::new(body)),
+        )])],
+    )
+    .unwrap();
+    let added = out.into_inner();
+    let (record, names) = checked(added.clone());
+    assert_eq!(record.components.len(), 1);
+    assert!(names.iter().any(|n| n == member));
+
+    let new_content = b"replacement content".to_vec();
+    let new_sha = Hash::of(&new_content);
+    let written_sha = new_sha.clone();
+    let update = move |doc: &mut DocumentMut| {
+        doc["records"]["fixity"]["content_sha256"] = Item::Value(Value::from(written_sha.as_str()));
+        doc["records"]["size"] = Item::Value(Value::from(19));
+        doc["records"]["mime_type"] = Item::Value(Value::from("text/plain"));
+        let table = doc["records"].as_table_like_mut().unwrap();
+        table.remove("components");
+        Ok(())
+    };
+    let mut replaced = hold_applied();
+    replaced.r#type = EventType::ContentReplaced;
+    let mut detail = InlineTable::new();
+    detail.insert("from_sha256", Value::from(record.content_sha256.as_str()));
+    detail.insert("to_sha256", Value::from(new_sha.as_str()));
+    detail.insert("reason", Value::from("corrected scan"));
+    replaced.detail = Some(detail);
+    let mut out = Cursor::new(Vec::new());
+    events::append_steps(
+        &mut Cursor::new(added),
+        &mut out,
+        vec![
+            Step::new(
+                |_| Ok(()),
+                component_event(EventType::ComponentRemoved, member, sha.as_str()),
+            )
+            .with_members(vec![MemberChange::Remove(member.into())]),
+            Step::new(update, replaced).with_members(vec![MemberChange::Content(
+                "invoice-2024-0117.txt".into(),
+                Box::new(Cursor::new(new_content)),
+            )]),
+        ],
+    )
+    .unwrap();
+    let (record, names) = checked(out.into_inner().clone());
+    assert!(record.components.is_empty());
+    assert!(!names.iter().any(|n| n == member));
+    assert_eq!(record.content_sha256, new_sha);
+    assert_eq!(record.size, 19);
 }

@@ -26,7 +26,8 @@ Writing goes through the same modules: `events::start` begins a new
 container's log, `records::create` packs it, `Record::to_toml` and its
 siblings write a table the way `records::read` reads one, and
 `events::append` and `events::append_steps` change a container's table and
-record the change in one write. Behind the `dispose` feature, `dispose`
+record the change in one write, with any member a step adds, removes, or
+replaces. Behind the `dispose` feature, `dispose`
 evaluates, plans, destroys, and recovers, with the certificate rendered by
 the caller once every outcome is known.
 

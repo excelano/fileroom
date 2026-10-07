@@ -562,12 +562,26 @@ pub fn start(kind: Kind, id: &Identifier, event: &NewEvent) -> Result<Started, E
 /// An edit to a flyleaf, applied before the entry recording it is written.
 pub type Change<'a> = Box<dyn FnOnce(&mut DocumentMut) -> Result<(), Malformed> + 'a>;
 
-/// One change to the table and the event that records it.
+/// A member written, removed, or replaced in the same repack as a step's
+/// change and entry (SPEC §2.9): a component, or the content file.
+pub enum MemberChange<'a> {
+    /// Set an additional member to these bytes, adding it or replacing it.
+    Set(String, Box<dyn Read + 'a>),
+    /// Remove an additional member.
+    Remove(String),
+    /// Replace the content file, stored under this name.
+    Content(String, Box<dyn Read + 'a>),
+}
+
+/// One change to the table and the event that records it, with any
+/// members the change writes, removes, or replaces.
 pub struct Step<'a> {
     /// The edit.
     pub change: Change<'a>,
     /// The entry.
     pub event: NewEvent,
+    /// The members that change with it.
+    pub members: Vec<MemberChange<'a>>,
 }
 
 impl<'a> Step<'a> {
@@ -579,7 +593,15 @@ impl<'a> Step<'a> {
         Self {
             change: Box::new(change),
             event,
+            members: Vec::new(),
         }
+    }
+
+    /// The step with members that change in the same repack.
+    #[must_use]
+    pub fn with_members(mut self, members: Vec<MemberChange<'a>>) -> Self {
+        self.members = members;
+        self
     }
 }
 
@@ -606,8 +628,9 @@ where
 
 /// [`append`] for several changes in one write: each step's change is
 /// applied and its entry chained after the last, in order, and the container
-/// is repacked once. A classification and the hold applications it causes
-/// are one write this way (SPEC §4.3).
+/// is repacked once, with every member the steps set, remove, or replace. A
+/// classification and the hold applications it causes are one write this way
+/// (SPEC §4.3), and so are a component and the entry that lists it (§2.9).
 ///
 /// # Errors
 ///
@@ -666,17 +689,26 @@ where
     let seed = id.as_str().as_bytes().to_vec();
     let mut doc = c.flyleaf().clone();
     let mut new_head = head.clone();
+    let mut members = Vec::new();
     for step in steps {
         (step.change)(&mut doc)?;
         new_head = log.append(&seed, step.event.at, &step.event.body())?;
+        members.extend(step.members);
     }
     doc[records::TABLE]["events_head"] = Item::Value(Value::from(new_head.as_str()));
     drop(c);
     source.rewind()?;
-    Repack::new(&mut *source)
+    let mut repack = Repack::new(&mut *source)
         .flyleaf(&doc)
-        .member(EVENTS_MEMBER, Cursor::new(log.bytes()))
-        .write(out)?;
+        .member(EVENTS_MEMBER, Cursor::new(log.bytes()));
+    for change in members {
+        repack = match change {
+            MemberChange::Set(name, bytes) => repack.member(&name, bytes),
+            MemberChange::Remove(name) => repack.remove_member(&name),
+            MemberChange::Content(name, bytes) => repack.content(&name, bytes),
+        };
+    }
+    repack.write(out)?;
     Ok(new_head)
 }
 
