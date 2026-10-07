@@ -9,9 +9,8 @@ use std::path::Path;
 use slpc::toml_edit::DocumentMut;
 use slpc::Container;
 
-use crate::conventions::{Date, Hash, Identifier, Instant};
+use crate::conventions::{Hash, Identifier, Instant};
 use crate::dispose::certificate;
-use crate::dispose::dates::from_days_since_epoch;
 use crate::dispose::eligibility::{evaluate_container, Context, Outcome as Eligibility};
 use crate::dispose::plan::{Plan, DEFAULT_SCOPE_STATEMENT};
 use crate::records::{self, Hold, HoldStatus, Reading, Record, Table};
@@ -339,31 +338,6 @@ fn destroy_one(run: &Run<'_>, planned: &crate::dispose::plan::Planned) -> Record
         Err(e) => failed(e),
         Ok(_) => failed(std::io::Error::other("the file remains after deletion")),
     }
-}
-
-/// The current instant in UTC, from the system clock, for the timestamps a
-/// run writes. Eligibility never reads it.
-#[must_use]
-#[allow(clippy::cast_possible_truncation)]
-pub fn utc_now() -> Instant {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let days = i64::try_from(secs / 86_400).unwrap_or(0);
-    let rest = secs % 86_400;
-    Instant {
-        date: from_days_since_epoch(days),
-        hour: (rest / 3600) as u8,
-        minute: ((rest % 3600) / 60) as u8,
-        second: (rest % 60) as u8,
-        nanosecond: 0,
-    }
-}
-
-/// Today's UTC date from the system clock, for a command's default.
-#[must_use]
-pub fn utc_today() -> Date {
-    utc_now().date
 }
 
 /// This machine's name and the user running the program, for the intent.

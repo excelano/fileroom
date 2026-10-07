@@ -11,7 +11,7 @@ use std::path::Path;
 use slpc::Container;
 
 use crate::conventions::{Date, Identifier};
-use crate::dispose::dates::{add_period, cutoff};
+use crate::dates::{add_period, cutoff};
 use crate::events::{self, Event, EventType};
 use crate::records::{self, Reading, Record, Table};
 use crate::schedule::{

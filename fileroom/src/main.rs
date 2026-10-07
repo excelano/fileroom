@@ -58,6 +58,20 @@ enum Verb {
         #[command(flatten)]
         root: Root,
     },
+    /// Check content and component hashes and locations, write the sweep report, and log what changed or moved
+    Fixity {
+        #[command(flatten)]
+        root: Root,
+        /// On whose authority the events are appended
+        #[arg(long, value_name = "EMAIL")]
+        actor: String,
+        /// That person's identifier in the organization's directory
+        #[arg(long, value_name = "ID")]
+        actor_id: Option<String>,
+        #[arg(long, short)]
+        recursive: bool,
+        paths: Vec<PathBuf>,
+    },
     /// Each record's eligibility as of a date, against the schedule in force
     #[cfg(feature = "dispose")]
     Evaluate {
@@ -144,6 +158,13 @@ fn main() -> ExitCode {
         Verb::Schedule { root, series } => schedule(&root.root, series.as_deref()),
         Verb::Register { root } => register(&root.root),
         Verb::Verify { root } => verify(&root.root),
+        Verb::Fixity {
+            root,
+            actor,
+            actor_id,
+            recursive,
+            paths,
+        } => fixity(&root.root, actor, actor_id, &containers(&paths, recursive)),
         #[cfg(feature = "dispose")]
         Verb::Evaluate {
             root,
@@ -677,6 +698,86 @@ fn verify(root: &Path) -> Outcome {
     }
 }
 
+fn fixity(root: &Path, actor: String, actor_id: Option<String>, paths: &[PathBuf]) -> Outcome {
+    let settings = match fileroom::settings::Settings::load(root.join("settings.toml")) {
+        Ok(s) => s,
+        Err(e) => return failed(&e),
+    };
+    let actor = fileroom::conventions::Agent {
+        id: actor_id.unwrap_or_else(|| actor.clone()),
+        email: actor,
+    };
+    let tool = format!("fileroom {}", env!("CARGO_PKG_VERSION"));
+    let sweep = fileroom::fixity::Sweep {
+        root,
+        settings: &settings,
+        actor: &actor,
+        tool: &tool,
+    };
+    let report = match fileroom::fixity::sweep(&sweep, paths, &mut fileroom::dates::utc_now) {
+        Ok(r) => r,
+        Err(e) => return failed(&e),
+    };
+    for c in &report.checked {
+        match &c.finding {
+            fileroom::fixity::Finding::Unclassified => {
+                println!("{}: unclassified", c.path.display());
+            }
+            fileroom::fixity::Finding::Unreadable(why) => {
+                println!("{}: unreadable: {why}", c.path.display());
+            }
+            fileroom::fixity::Finding::Record {
+                failures, logged, ..
+            } => {
+                for f in failures {
+                    println!(
+                        "{}: {} hashes to {}, not {}",
+                        c.path.display(),
+                        f.member,
+                        f.found
+                            .as_ref()
+                            .map_or("nothing (absent)".to_owned(), ToString::to_string),
+                        f.expected
+                    );
+                }
+                if c.moved() {
+                    println!(
+                        "{}: moved from {}",
+                        c.path.display(),
+                        logged.path.as_deref().unwrap_or(&logged.raw)
+                    );
+                } else if c.not_comparable() {
+                    println!(
+                        "{}: location not comparable (no share root)",
+                        c.path.display()
+                    );
+                } else if failures.is_empty() {
+                    println!("{}: ok", c.path.display());
+                }
+            }
+        }
+    }
+    println!(
+        "{} checked: {} failed, {} moved, {} unreadable, {} not comparable; report {}",
+        report.checked.len(),
+        report.failed(),
+        report.moved(),
+        report.unreadable(),
+        report.not_comparable(),
+        root.join("fixity").join(report.file_name()).display()
+    );
+    if report.clean() {
+        Outcome::Ok
+    } else {
+        Outcome::Partial(format!(
+            "{} failed, {} moved, {} unreadable",
+            report.failed(),
+            report.moved(),
+            report.unreadable()
+        ))
+    }
+}
+
 fn containers(paths: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for path in paths {
@@ -743,7 +844,7 @@ mod acting {
     fn date(as_of: Option<&str>) -> Result<Date, Outcome> {
         match as_of {
             Some(s) => Date::parse(s).map_err(Outcome::BadInput),
-            None => Ok(dispose::run::utc_today()),
+            None => Ok(fileroom::dates::utc_today()),
         }
     }
 
@@ -845,7 +946,7 @@ mod acting {
             as_of,
         };
         let mounts = Mounts::of(&loaded.settings);
-        let now = dispose::run::utc_now();
+        let now = fileroom::dates::utc_now();
         let id = plan_id(now);
         let tool = format!("fileroom {}", env!("CARGO_PKG_VERSION"));
         let (plan, considered) = match Plan::make(paths, context, &matcher, &mounts, id, now, &tool)
@@ -877,7 +978,7 @@ mod acting {
     }
 
     fn plan_id(now: fileroom::conventions::Instant) -> Identifier {
-        let ms = u64::try_from(dispose::dates::days_since_epoch(now.date)).unwrap_or(0)
+        let ms = u64::try_from(fileroom::dates::days_since_epoch(now.date)).unwrap_or(0)
             * 86_400_000
             + (u64::from(now.hour) * 3600 + u64::from(now.minute) * 60 + u64::from(now.second))
                 * 1000;
@@ -977,7 +1078,7 @@ mod acting {
             component: format!("fileroom {}", env!("CARGO_PKG_VERSION")),
             certificate,
         };
-        let summary = match dispose::dispose(&run, &mut dispose::run::utc_now, &mut |p| {
+        let summary = match dispose::dispose(&run, &mut fileroom::dates::utc_now, &mut |p| {
             let o = p.outcome;
             println!(
                 "{:>6}/{}  {}  {}{}",
@@ -1067,7 +1168,7 @@ mod acting {
             settings: &settings,
             certificate,
         };
-        match dispose::recover(&recovery, &mut dispose::run::utc_now) {
+        match dispose::recover(&recovery, &mut fileroom::dates::utc_now) {
             Ok(r) => {
                 println!(
                     "batch {:06} final by recovery: {} outcomes from the journal, {} present and not attempted, {} unknown",

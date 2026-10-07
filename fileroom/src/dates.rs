@@ -1,10 +1,11 @@
 //! Civil date arithmetic (SPEC §8.2): cutoffs and periods, with the
-//! month-end rule. No clock and no time zone take part.
+//! month-end rule. Eligibility never reads a clock; the two functions that
+//! do are here for the timestamps a run writes.
 //
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
-use crate::conventions::Date;
+use crate::conventions::{Date, Instant};
 use crate::schedule::{Cutoff, Period, Unit};
 
 fn date(year: u16, month: u8, day: u8) -> Date {
@@ -98,6 +99,30 @@ pub fn cutoff(d: Date, c: Cutoff, fiscal_year_start_month: u8) -> Date {
             add_days(next_start, -1)
         }
     }
+}
+
+/// The current instant in UTC from the system clock.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn utc_now() -> Instant {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let days = i64::try_from(secs / 86_400).unwrap_or(0);
+    let rest = secs % 86_400;
+    Instant {
+        date: from_days_since_epoch(days),
+        hour: (rest / 3600) as u8,
+        minute: ((rest % 3600) / 60) as u8,
+        second: (rest % 60) as u8,
+        nanosecond: 0,
+    }
+}
+
+/// Today's UTC date from the system clock.
+#[must_use]
+pub fn utc_today() -> Date {
+    utc_now().date
 }
 
 #[cfg(test)]

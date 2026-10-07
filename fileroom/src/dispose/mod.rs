@@ -5,7 +5,6 @@
 // Built with AI assistance (Claude, Anthropic)
 
 pub mod certificate;
-pub mod dates;
 pub mod eligibility;
 pub mod plan;
 pub mod recover;

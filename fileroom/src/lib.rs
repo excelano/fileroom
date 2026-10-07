@@ -7,10 +7,12 @@
 #![allow(clippy::missing_errors_doc, clippy::module_name_repetitions)]
 
 pub mod conventions;
+pub mod dates;
 #[cfg(feature = "dispose")]
 pub mod dispose;
 mod error;
 pub mod events;
+pub mod fixity;
 mod keys;
 pub mod location;
 pub mod log;
