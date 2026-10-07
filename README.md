@@ -1,6 +1,6 @@
 # fileroom
 
-The open core of [Fileroom](https://github.com/excelano/fileroom): the
+The open core of [Slipcase Fileroom](https://github.com/excelano/fileroom): the
 `fileroom` crate and command implement the [Slipcase Records
 Profile](https://github.com/excelano/slipcase-profiles/tree/main/records),
 so that a record's retention state, its history, and the disposition register

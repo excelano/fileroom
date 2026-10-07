@@ -1,7 +1,7 @@
 # How a record is found eligible, and what destruction does
 
 This document is for an auditor or counsel asking how a record came to be
-destroyed under Fileroom. It describes what the `fileroom` crate does, which
+destroyed under Slipcase Fileroom or the `fileroom` command. It describes what the `fileroom` crate does, which
 is the only code in the product that destroys anything. The normative rules
 are the [Slipcase Records Profile](https://github.com/excelano/slipcase-profiles/tree/main/records);
 where this page and the specification differ, the specification is right

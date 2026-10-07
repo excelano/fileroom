@@ -37,7 +37,7 @@ fn hold_applied() -> NewEvent {
         },
         r#type: EventType::HoldApplied,
         actor: jdoe(),
-        tool: "fileroom-pro 0.1.0".into(),
+        tool: "slipcase-fileroom 0.1.0".into(),
         location: Some(Location {
             root: Some("legal".into()),
             path: Some("contracts/C-4471/invoice-2024-0117.pdf.slpc".into()),
@@ -250,7 +250,7 @@ fn a_fresh_log_starts_from_the_seed() {
     let mut body = fileroom::slpc::toml_edit::Table::new();
     body.insert("type", Item::Value(Value::from("captured")));
     body.insert("actor", Item::Value(Value::InlineTable(jdoe().to_toml())));
-    body.insert("tool", Item::Value(Value::from("fileroom-pro 0.1.0")));
+    body.insert("tool", Item::Value(Value::from("slipcase-fileroom 0.1.0")));
     body.insert(
         "location",
         Item::Value(Value::InlineTable(first.location.unwrap().to_table())),

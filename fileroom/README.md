@@ -1,6 +1,6 @@
 # fileroom
 
-The open core of Fileroom, records management on Slipcase containers: a Rust
+The open core of Slipcase Fileroom, records management on Slipcase containers: a Rust
 crate that reads and verifies what the [Slipcase Records
 Profile](https://github.com/excelano/slipcase-profiles/tree/main/records)
 defines. A record is a `.slpc` container whose flyleaf carries a `[records]`

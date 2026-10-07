@@ -46,7 +46,7 @@ fn show_log_and_check_read_the_examples() {
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("hold_applied"));
     assert!(out.contains("at legal:contracts/C-4471/invoice-2024-0117.pdf.slpc"));
-    assert!(out.contains("intact: 2 entries, head e6cee8ed"));
+    assert!(out.contains("intact: 2 entries, head 0c5e40af"));
 
     let broken = packed(dir.path(), "invalid/events-chain-broken");
     let (code, _, err) = fileroom(&["log", broken.to_str().unwrap()], dir.path());
