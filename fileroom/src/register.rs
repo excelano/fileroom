@@ -6,7 +6,7 @@
 
 use std::fmt;
 use std::fs::{File, OpenOptions};
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use slpc::toml_edit::{Array, DocumentMut, Item, Table as TomlTable, Value};
@@ -680,7 +680,9 @@ impl Register {
     }
 
     /// Read a batch's journal: the log verified against the intent's flyleaf
-    /// hash, and its entries. None where no outcome has been journaled.
+    /// hash, and its entries. None where no outcome has been journaled, a
+    /// journal of zero length included: its writer died before the first
+    /// entry was stored.
     ///
     /// # Errors
     ///
@@ -688,6 +690,7 @@ impl Register {
     pub fn journal(&self, sequence: u32) -> Result<Option<(Log, Vec<JournalEntry>)>, Error> {
         let path = self.journal_path(sequence);
         let bytes = match std::fs::read(&path) {
+            Ok(b) if b.is_empty() => return Ok(None),
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.into()),
@@ -844,7 +847,11 @@ impl Register {
         };
         let before = log.bytes().len();
         let head = log.append(seed.as_str().as_bytes(), entry.at, &entry.body())?;
-        let mut file = OpenOptions::new().append(true).create(true).open(&path)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)?;
         if file.metadata()?.len() != before as u64 {
             return Err(Malformed::new(
                 "6.5",
@@ -853,6 +860,7 @@ impl Register {
             )
             .into());
         }
+        file.seek(std::io::SeekFrom::Start(before as u64))?;
         file.write_all(&log.bytes()[before..])?;
         file.sync_all()?;
         Ok(head)

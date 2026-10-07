@@ -302,3 +302,18 @@ fn a_plan_is_refused_before_it_claims() {
     assert!(matches!(r.claim(&decided), Err(Error::Malformed(m)) if m.rule == "6.3"));
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn an_empty_journal_is_no_journal_and_takes_the_first_outcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = Register::open(dir.path());
+    r.claim(&plan()).unwrap();
+    std::fs::write(r.journal_path(1), b"").unwrap();
+    assert!(r.journal(1).unwrap().is_none());
+    assert!(r.unfinished(1).unwrap().last_outcome.is_none());
+    r.journal_append(1, &outcome(1, 59, Outcome::Destroyed, None))
+        .unwrap();
+    let (log, entries) = r.journal(1).unwrap().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(log.bytes().starts_with(b"[[outcome]]\n"));
+}
