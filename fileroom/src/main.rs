@@ -20,6 +20,8 @@ Exit codes:
   1  bad input: a file that is missing or unreadable, a non-conformant container, or a broken register
   2  bad command line
   3  no verdict: an undetermined container, or one declaring a version this build does not implement
+  4  partial: a disposal run skipped or failed some of its records
+  5  refused: an unfinished batch, a plan nobody approved, or hold scopes this build cannot evaluate
 
 The records root is the directory holding settings.toml; --root names it, and
 FILEROOM_ROOT is its default.";
@@ -61,10 +63,46 @@ enum Verb {
     Evaluate {
         #[command(flatten)]
         root: Root,
-        /// The evaluation date; nothing reads a clock
+        /// The evaluation date; today in UTC when absent, and the output says which
         #[arg(long, value_name = "DATE")]
-        as_of: String,
-        containers: Vec<PathBuf>,
+        as_of: Option<String>,
+        /// Descend into directories
+        #[arg(long, short)]
+        recursive: bool,
+        paths: Vec<PathBuf>,
+    },
+    /// Write a plan of the eligible records among the paths given
+    #[cfg(feature = "dispose")]
+    Plan {
+        #[command(flatten)]
+        root: Root,
+        #[arg(long, value_name = "DATE")]
+        as_of: Option<String>,
+        #[arg(long, short)]
+        recursive: bool,
+        /// The plan file to write; never replaced
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
+        paths: Vec<PathBuf>,
+    },
+    /// Execute an approved plan: the only verb that deletes
+    #[cfg(feature = "dispose")]
+    Dispose {
+        #[command(flatten)]
+        root: Root,
+        plan: PathBuf,
+        /// Who approved the plan, as stated; recorded, never verified
+        #[arg(long, value_name = "EMAIL")]
+        approved_by: Vec<String>,
+        /// A rendered certificate to carry instead of the text one
+        #[arg(long, value_name = "FILE")]
+        certificate: Option<PathBuf>,
+        /// What destruction means here, where the organization states its own
+        #[arg(long, value_name = "TEXT")]
+        scope_statement: Option<String>,
+        /// Run without asking
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 
@@ -78,6 +116,8 @@ enum Outcome {
     Ok,
     BadInput(String),
     NoVerdict(String),
+    Partial(String),
+    Refused(String),
 }
 
 fn main() -> ExitCode {
@@ -93,8 +133,38 @@ fn main() -> ExitCode {
         Verb::Evaluate {
             root,
             as_of,
-            containers,
-        } => evaluate(&root.root, &as_of, &containers),
+            recursive,
+            paths,
+        } => acting::evaluate(&root.root, as_of.as_deref(), &containers(&paths, recursive)),
+        #[cfg(feature = "dispose")]
+        Verb::Plan {
+            root,
+            as_of,
+            recursive,
+            out,
+            paths,
+        } => acting::plan(
+            &root.root,
+            as_of.as_deref(),
+            &containers(&paths, recursive),
+            &out,
+        ),
+        #[cfg(feature = "dispose")]
+        Verb::Dispose {
+            root,
+            plan,
+            approved_by,
+            certificate,
+            scope_statement,
+            yes,
+        } => acting::dispose(
+            &root.root,
+            &plan,
+            approved_by,
+            certificate.as_deref(),
+            scope_statement,
+            yes,
+        ),
     };
     match outcome {
         Outcome::Ok => ExitCode::from(0),
@@ -105,6 +175,14 @@ fn main() -> ExitCode {
         Outcome::NoVerdict(message) => {
             eprintln!("fileroom: {message}");
             ExitCode::from(3)
+        }
+        Outcome::Partial(message) => {
+            eprintln!("fileroom: {message}");
+            ExitCode::from(4)
+        }
+        Outcome::Refused(message) => {
+            eprintln!("fileroom: {message}");
+            ExitCode::from(5)
         }
     }
 }
@@ -572,65 +650,341 @@ fn verify(root: &Path) -> Outcome {
     }
 }
 
-#[cfg(feature = "dispose")]
-fn evaluate(root: &Path, as_of: &str, paths: &[PathBuf]) -> Outcome {
-    use fileroom::dispose::{evaluate_path, Context};
-    let as_of = match fileroom::conventions::Date::parse(as_of) {
-        Ok(d) => d,
-        Err(e) => return Outcome::BadInput(e),
-    };
-    let settings = match fileroom::settings::Settings::load(root.join("settings.toml")) {
-        Ok(s) => s,
-        Err(e) => return failed(&e),
-    };
-    let store = Store::open(root.join("schedule"));
-    let version = match store.current() {
-        Ok(Some(v)) => v,
-        Ok(None) => return Outcome::BadInput("no schedule is current".into()),
-        Err(e) => return failed(&e),
-    };
-    let (schedule, _) = match store.load(&version) {
-        Ok(x) => x,
-        Err(e) => return failed(&e),
-    };
-    let context = Context {
-        schedule: &schedule,
-        schedule_version: version.as_str(),
-        settings: &settings,
-        as_of,
-    };
-    println!("as of {as_of}, schedule {version}");
-    let mut failures = 0;
+fn containers(paths: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
+    let mut out = Vec::new();
     for path in paths {
-        match evaluate_path(path, &[], context) {
-            Err(e) => {
-                failures += 1;
-                println!("{}: {e}", path.display());
-            }
-            Ok(None) => println!("{}: unclassified", path.display()),
-            Ok(Some(e)) => {
-                let reasons: Vec<String> = e
-                    .reasons
-                    .iter()
-                    .map(|r| r.detail().map_or(r.to_string(), |d| format!("{r}: {d}")))
-                    .collect();
-                let flags: Vec<String> = e.flags.iter().map(ToString::to_string).collect();
-                let earliest = e
-                    .earliest
-                    .map_or(String::new(), |d| format!("  earliest {d}"));
-                println!("{}: {}{earliest}", path.display(), e.outcome);
-                for r in reasons {
-                    println!("    {r}");
+        if path.is_dir() {
+            let mut inside: Vec<PathBuf> = std::fs::read_dir(path)
+                .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
+                .unwrap_or_default();
+            inside.sort();
+            for p in inside {
+                if p.is_dir() {
+                    if recursive {
+                        out.extend(containers(&[p], true));
+                    }
+                } else if p.extension().is_some_and(|e| e == "slpc") {
+                    out.push(p);
                 }
-                for f in flags {
-                    println!("    flag {f}");
+            }
+        } else {
+            out.push(path.clone());
+        }
+    }
+    out
+}
+
+#[cfg(feature = "dispose")]
+mod acting {
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    use fileroom::conventions::{Date, Identifier};
+    use fileroom::dispose::{self, Context, Matters, Plan, Run};
+    use fileroom::location::Mounts;
+    use fileroom::schedule::{Schedule, Store, VersionId};
+    use fileroom::settings::Settings;
+    use fileroom::Error;
+
+    use super::{failed, line, Outcome};
+
+    struct Loaded {
+        settings: Settings,
+        schedule: Schedule,
+        version: VersionId,
+    }
+
+    fn load(root: &Path, version: Option<&str>) -> Result<Loaded, Outcome> {
+        let settings = Settings::load(root.join("settings.toml")).map_err(|e| failed(&e))?;
+        let store = Store::open(root.join("schedule"));
+        let version = match version {
+            Some(v) => VersionId::parse(v).map_err(Outcome::BadInput)?,
+            None => match store.current() {
+                Ok(Some(v)) => v,
+                Ok(None) => return Err(Outcome::BadInput("no schedule is current".into())),
+                Err(e) => return Err(failed(&e)),
+            },
+        };
+        let (schedule, _) = store.load(&version).map_err(|e| failed(&e))?;
+        Ok(Loaded {
+            settings,
+            schedule,
+            version,
+        })
+    }
+
+    fn date(as_of: Option<&str>) -> Result<Date, Outcome> {
+        match as_of {
+            Some(s) => Date::parse(s).map_err(Outcome::BadInput),
+            None => Ok(dispose::run::utc_today()),
+        }
+    }
+
+    /// Until `SlipQL` evaluates a scope against one flyleaf, a root with active
+    /// matters cannot have their scopes checked, and the acting verbs refuse.
+    fn matcher(
+        root: &Path,
+    ) -> Result<
+        impl Fn(
+            &fileroom::records::Record,
+            &fileroom::slpc::toml_edit::DocumentMut,
+        ) -> Result<Vec<Identifier>, Error>,
+        Outcome,
+    > {
+        let matters = Matters::load(root).map_err(|e| failed(&e))?;
+        if !matters.active.is_empty() {
+            return Err(Outcome::Refused(format!(
+                "{} active hold matters whose scopes this build cannot evaluate",
+                matters.active.len()
+            )));
+        }
+        Ok(
+            |_: &fileroom::records::Record, _: &fileroom::slpc::toml_edit::DocumentMut| {
+                Ok(Vec::new())
+            },
+        )
+    }
+
+    pub fn evaluate(root: &Path, as_of: Option<&str>, paths: &[PathBuf]) -> Outcome {
+        let (loaded, as_of) = match (load(root, None), date(as_of)) {
+            (Ok(l), Ok(d)) => (l, d),
+            (Err(o), _) | (_, Err(o)) => return o,
+        };
+        let matcher = match matcher(root) {
+            Ok(m) => m,
+            Err(o) => return o,
+        };
+        let context = Context {
+            schedule: &loaded.schedule,
+            schedule_version: loaded.version.as_str(),
+            settings: &loaded.settings,
+            as_of,
+        };
+        println!("as of {as_of}, schedule {}", loaded.version);
+        let mut failures = 0;
+        for path in paths {
+            let unapplied = fileroom::slpc::Container::open(path)
+                .ok()
+                .and_then(|c| match fileroom::records::read(c.flyleaf()) {
+                    fileroom::records::Reading::Table(fileroom::records::Table::Record(r)) => {
+                        matcher(&r, c.flyleaf()).ok()
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            match dispose::evaluate_path(path, &unapplied, context) {
+                Err(e) => {
+                    failures += 1;
+                    println!("{}: {e}", path.display());
+                }
+                Ok(None) => println!("{}: unclassified", path.display()),
+                Ok(Some(e)) => {
+                    let earliest = e
+                        .earliest
+                        .map_or(String::new(), |d| format!("  earliest {d}"));
+                    println!("{}: {}{earliest}", path.display(), e.outcome);
+                    for r in &e.reasons {
+                        println!(
+                            "    {}",
+                            r.detail().map_or(r.to_string(), |d| format!("{r}: {d}"))
+                        );
+                    }
+                    for f in &e.flags {
+                        println!("    flag {f}");
+                    }
                 }
             }
         }
+        if failures > 0 {
+            Outcome::BadInput(format!("{failures} could not be read"))
+        } else {
+            Outcome::Ok
+        }
     }
-    if failures > 0 {
-        Outcome::BadInput(format!("{failures} could not be read"))
-    } else {
+
+    pub fn plan(root: &Path, as_of: Option<&str>, paths: &[PathBuf], out: &Path) -> Outcome {
+        let (loaded, as_of) = match (load(root, None), date(as_of)) {
+            (Ok(l), Ok(d)) => (l, d),
+            (Err(o), _) | (_, Err(o)) => return o,
+        };
+        let matcher = match matcher(root) {
+            Ok(m) => m,
+            Err(o) => return o,
+        };
+        let context = Context {
+            schedule: &loaded.schedule,
+            schedule_version: loaded.version.as_str(),
+            settings: &loaded.settings,
+            as_of,
+        };
+        let mounts = Mounts::of(&loaded.settings);
+        let now = dispose::run::utc_now();
+        let id = plan_id(now);
+        let tool = format!("fileroom {}", env!("CARGO_PKG_VERSION"));
+        let (plan, considered) = match Plan::make(paths, context, &matcher, &mounts, id, now, &tool)
+        {
+            Ok(x) => x,
+            Err(e) => return failed(&e),
+        };
+        if let Err(e) = plan.write(out) {
+            return failed(&e);
+        }
+        for c in considered.iter().filter(|c| !c.planned) {
+            let why = c
+                .evaluation
+                .as_ref()
+                .map_or("unclassified".to_owned(), |e| {
+                    let reasons: Vec<String> = e.reasons.iter().map(ToString::to_string).collect();
+                    format!("{} {}", e.outcome, reasons.join(" "))
+                });
+            println!("left out  {}: {why}", c.path.display());
+        }
+        println!(
+            "{} of {} records planned as of {as_of} against {}; written to {}",
+            plan.records.len(),
+            considered.len(),
+            loaded.version,
+            out.display()
+        );
         Outcome::Ok
+    }
+
+    fn plan_id(now: fileroom::conventions::Instant) -> Identifier {
+        let ms = u64::try_from(dispose::dates::days_since_epoch(now.date)).unwrap_or(0)
+            * 86_400_000
+            + (u64::from(now.hour) * 3600 + u64::from(now.minute) * 60 + u64::from(now.second))
+                * 1000;
+        let random = u64::from(std::process::id()) ^ (ms << 20);
+        let text = format!(
+            "{:08x}-{:04x}-7{:03x}-{:04x}-{:012x}",
+            (ms >> 16) & 0xFFFF_FFFF,
+            ms & 0xFFFF,
+            (random >> 52) & 0xFFF,
+            0x8000 | ((random >> 36) & 0x3FFF),
+            random & 0xFFFF_FFFF_FFFF
+        );
+        Identifier::parse(&text).expect("well formed by construction")
+    }
+
+    fn describe(plan: &Plan) {
+        line("plan", &plan.id);
+        line("records", &plan.records.len());
+        line(
+            "evaluated",
+            &format!("{} against {}", plan.evaluated, plan.schedule_version),
+        );
+        line("approved_by", &plan.approved_by.join(", "));
+        line(
+            "scope",
+            plan.scope_statement
+                .as_deref()
+                .unwrap_or(dispose::plan::DEFAULT_SCOPE_STATEMENT),
+        );
+    }
+
+    fn confirmed(count: usize) -> bool {
+        print!("Destroy these {count} records? Type yes to continue: ");
+        std::io::stdout().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).ok();
+        answer.trim() == "yes"
+    }
+
+    pub fn dispose(
+        root: &Path,
+        plan_path: &Path,
+        approved_by: Vec<String>,
+        certificate: Option<&Path>,
+        scope_statement: Option<String>,
+        yes: bool,
+    ) -> Outcome {
+        let mut plan = match Plan::load(plan_path) {
+            Ok(p) => p,
+            Err(e) => return failed(&e),
+        };
+        plan.approved_by.extend(approved_by);
+        if scope_statement.is_some() {
+            plan.scope_statement = scope_statement;
+        }
+        if plan.approved_by.is_empty() {
+            return Outcome::Refused("the plan records no approval; pass --approved-by".into());
+        }
+        let loaded = match load(root, Some(&plan.schedule_version)) {
+            Ok(l) => l,
+            Err(o) => return o,
+        };
+        let matcher = match matcher(root) {
+            Ok(m) => m,
+            Err(o) => return o,
+        };
+        let certificate = match certificate {
+            None => None,
+            Some(path) => match std::fs::read(path) {
+                Ok(bytes) => Some((
+                    path.file_name().map_or("certificate".to_owned(), |n| {
+                        n.to_string_lossy().into_owned()
+                    }),
+                    bytes,
+                )),
+                Err(e) => return Outcome::BadInput(format!("{}: {e}", path.display())),
+            },
+        };
+        describe(&plan);
+        if !yes && !confirmed(plan.records.len()) {
+            return Outcome::Refused("not confirmed".into());
+        }
+        let context = Context {
+            schedule: &loaded.schedule,
+            schedule_version: loaded.version.as_str(),
+            settings: &loaded.settings,
+            as_of: plan.evaluated,
+        };
+        let (host, user) = dispose::run::host_and_user();
+        let run = Run {
+            root,
+            plan: &plan,
+            context,
+            matcher: &matcher,
+            host,
+            user,
+            component: format!("fileroom {}", env!("CARGO_PKG_VERSION")),
+            certificate,
+        };
+        let summary = match dispose::dispose(&run, &mut dispose::run::utc_now, &mut |p| {
+            let o = p.outcome;
+            println!(
+                "{:>6}/{}  {}  {}{}",
+                p.index,
+                p.total,
+                o.id,
+                o.outcome,
+                o.reason.as_deref().map_or(String::new(), |r| format!(
+                    "  {r}{}",
+                    o.error
+                        .as_deref()
+                        .map_or(String::new(), |e| format!(": {e}"))
+                ))
+            );
+        }) {
+            Ok(s) => s,
+            Err(Error::Refused(r)) => return Outcome::Refused(r.to_string()),
+            Err(e) => return failed(&e),
+        };
+        println!(
+            "batch {:06} final: {} destroyed, {} skipped, {} failed",
+            summary.sequence,
+            summary.destroyed(),
+            summary.skipped(),
+            summary.failed()
+        );
+        if summary.skipped() + summary.failed() > 0 {
+            Outcome::Partial(format!(
+                "{} of {} records not destroyed",
+                summary.skipped() + summary.failed(),
+                summary.outcomes.len()
+            ))
+        } else {
+            Outcome::Ok
+        }
     }
 }

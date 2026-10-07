@@ -124,6 +124,8 @@ pub enum Refusal {
     AlreadyFinal(u32),
     /// A batch that is not unfinished cannot be recovered.
     NotUnfinished(u32),
+    /// A plan nobody approved is not executed.
+    Unapproved,
 }
 
 impl fmt::Display for Refusal {
@@ -132,6 +134,7 @@ impl fmt::Display for Refusal {
             Self::Unfinished(u) => write!(f, "{u}"),
             Self::AlreadyFinal(n) => write!(f, "batch {n:06} is already final"),
             Self::NotUnfinished(n) => write!(f, "batch {n:06} is not an unfinished batch"),
+            Self::Unapproved => f.write_str("the plan records no approval"),
         }
     }
 }
