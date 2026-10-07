@@ -22,5 +22,13 @@ fn main() -> fileroom::Result<()> {
 }
 ```
 
+Writing goes through the same modules: `events::start` begins a new
+container's log, `records::create` packs it, `Record::to_toml` and its
+siblings write a table the way `records::read` reads one, and
+`events::append` and `events::append_steps` change a container's table and
+record the change in one write. Behind the `dispose` feature, `dispose`
+evaluates, plans, destroys, and recovers, with the certificate rendered by
+the caller once every outcome is known.
+
 The specification is the authority on what conforms; where this crate and the
 specification disagree, the specification wins and the crate has a bug.

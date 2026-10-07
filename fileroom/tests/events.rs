@@ -7,9 +7,9 @@ use std::io::{Cursor, Read};
 
 use common::{examples, pack};
 use fileroom::conventions::{Agent, Date, Hash, Instant};
-use fileroom::events::{self, EventType, NewEvent};
+use fileroom::events::{self, EventType, NewEvent, Step};
 use fileroom::location::Location;
-use fileroom::records::{self, Reading, EVENTS_MEMBER};
+use fileroom::records::{self, Kind, New, Reading, Table, EVENTS_MEMBER};
 use fileroom::slpc::toml_edit::{DocumentMut, InlineTable, Item, Value};
 use fileroom::slpc::{Container, Repack};
 use fileroom::Error;
@@ -269,5 +269,160 @@ fn a_fresh_log_starts_from_the_seed() {
     assert_eq!(
         Hash::parse(doc["records"]["events_head"].as_str().unwrap()).unwrap(),
         head
+    );
+}
+
+fn captured() -> NewEvent {
+    NewEvent {
+        at: Instant {
+            date: Date::new(2024, 2, 3).unwrap(),
+            hour: 15,
+            minute: 4,
+            second: 11,
+            nanosecond: 0,
+        },
+        r#type: EventType::Captured,
+        actor: jdoe(),
+        tool: "slipcase-fileroom 0.1.0".into(),
+        location: hold_applied().location,
+        detail: None,
+    }
+}
+
+fn minimal_record() -> records::Record {
+    let minimal = pack(&examples().join("valid/minimal"));
+    let c = Container::read(Cursor::new(minimal)).unwrap();
+    match records::read(c.flyleaf()) {
+        Reading::Table(Table::Record(r)) => r,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn starting_a_log_reproduces_the_minimal_fixture_byte_for_byte() {
+    let minimal = pack(&examples().join("valid/minimal"));
+    let record = minimal_record();
+    let started = events::start(Kind::Record, &record.id, &captured()).unwrap();
+    assert_eq!(started.bytes(), log_of(&minimal));
+    assert_eq!(started.head(), record.events_head);
+}
+
+#[test]
+fn a_started_log_grows_and_a_new_container_checks() {
+    let mut record = minimal_record();
+    let mut started = events::start(Kind::Record, &record.id, &captured()).unwrap();
+    let mut classified = hold_applied();
+    classified.r#type = EventType::Classified;
+    let mut detail = InlineTable::new();
+    detail.insert("code", Value::from("FIN-200"));
+    classified.detail = Some(detail);
+    started.push(&classified).unwrap();
+    record.events_head = started.head();
+    let content = std::fs::read(examples().join("valid/minimal/invoice-2024-0117.pdf")).unwrap();
+    let doc = records::flyleaf("invoice-2024-0117.pdf", record.to_toml());
+    let mut out = Cursor::new(Vec::new());
+    records::create(
+        New {
+            content_file: "invoice-2024-0117.pdf",
+            content: Box::new(Cursor::new(content)),
+            log: started.bytes(),
+            members: Vec::new(),
+        },
+        doc,
+        &mut out,
+    )
+    .unwrap();
+    let mut c = Container::read(Cursor::new(out.into_inner())).unwrap();
+    let Reading::Table(table) = records::check(&mut c).unwrap() else {
+        panic!("not a record")
+    };
+    let log = events::verify(&mut c, &table).unwrap().unwrap();
+    assert_eq!(log.len(), 2);
+    assert_eq!(log[1].r#type, EventType::Classified);
+}
+
+#[test]
+fn the_first_entry_has_to_be_the_kinds_first_type() {
+    let record = minimal_record();
+    let err = events::start(Kind::Record, &record.id, &hold_applied()).unwrap_err();
+    assert!(matches!(err, Error::Malformed(m) if m.rule == "2.8" && m.key == "type"));
+    let err = events::start(Kind::DisposalBatch, &record.id, &captured()).unwrap_err();
+    assert!(matches!(err, Error::Malformed(m) if m.rule == "6"));
+}
+
+#[test]
+fn several_steps_land_in_one_repack_in_order() {
+    let minimal = pack(&examples().join("valid/minimal"));
+    let mut classified = hold_applied();
+    classified.r#type = EventType::Classified;
+    let mut detail = InlineTable::new();
+    detail.insert("code", Value::from("LEG-010"));
+    classified.detail = Some(detail);
+    let mut out = Cursor::new(Vec::new());
+    let head = events::append_steps(
+        &mut Cursor::new(minimal),
+        &mut out,
+        vec![
+            Step::new(
+                |doc: &mut DocumentMut| {
+                    doc["records"]["marking"] = Item::Value(Value::from("Internal"));
+                    Ok(())
+                },
+                classified,
+            ),
+            Step::new(|_| Ok(()), hold_applied()),
+        ],
+    )
+    .unwrap();
+    let after = out.into_inner();
+    assert_eq!(head_of(&after), head.as_str());
+    let mut c = Container::read(Cursor::new(after)).unwrap();
+    let Reading::Table(table) = records::check(&mut c).unwrap() else {
+        panic!("not a record")
+    };
+    let Table::Record(record) = &table else {
+        panic!("not a record")
+    };
+    assert_eq!(record.marking.as_deref(), Some("Internal"));
+    let log = events::verify(&mut c, &table).unwrap().unwrap();
+    let types: Vec<EventType> = log.iter().map(|e| e.r#type).collect();
+    assert_eq!(
+        types,
+        [
+            EventType::Captured,
+            EventType::Classified,
+            EventType::HoldApplied
+        ]
+    );
+    assert!(log.windows(2).all(|w| w[0].seq + 1 == w[1].seq));
+}
+
+#[test]
+fn no_steps_is_refused_and_a_decision_outside_the_three_is_refused() {
+    let minimal = pack(&examples().join("valid/minimal"));
+    let err = events::append_steps(
+        &mut Cursor::new(minimal.clone()),
+        &mut Cursor::new(Vec::new()),
+        Vec::new(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, Error::Malformed(m) if m.rule == "2.8"));
+    let mut reviewed = hold_applied();
+    reviewed.r#type = EventType::Reviewed;
+    let mut detail = InlineTable::new();
+    detail.insert("code", Value::from("FIN-200"));
+    detail.insert("decision", Value::from("keep"));
+    detail.insert("comment", Value::from("still needed"));
+    reviewed.detail = Some(detail);
+    let err = events::append(
+        &mut Cursor::new(minimal),
+        &mut Cursor::new(Vec::new()),
+        |_| Ok(()),
+        &reviewed,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::Malformed(m) if m.rule == "2.8" && m.key == "detail.decision"),
+        "{err:?}"
     );
 }

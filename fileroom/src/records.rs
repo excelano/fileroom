@@ -7,8 +7,10 @@
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Seek};
 
-use slpc::toml_edit::{DocumentMut, Item, TableLike};
-use slpc::{Container, MemberError};
+use slpc::toml_edit::{
+    Array, ArrayOfTables, DocumentMut, Item, Table as TomlTable, TableLike, Value,
+};
+use slpc::{Container, MemberError, Repack};
 
 use crate::conventions::{Agent, Date, Hash, Identifier, Instant};
 use crate::keys::Keys;
@@ -69,7 +71,7 @@ pub enum Reading {
 }
 
 /// A conformant profile table, by kind.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Table {
     /// SPEC §2.
     Record(Record),
@@ -285,6 +287,263 @@ pub struct Aggregation {
     pub relations: Vec<Relation>,
     /// The head of the aggregation's log.
     pub events_head: Hash,
+}
+
+fn string(s: &str) -> Item {
+    Item::Value(Value::from(s))
+}
+
+fn agent_table(agent: &Agent) -> Item {
+    Item::Table(agent.to_toml().into_table())
+}
+
+fn profile_table(kind: Kind, id: &Identifier) -> TomlTable {
+    let mut t = TomlTable::new();
+    t.insert("profile", string(PROFILE));
+    t.insert("profile_version", string(PROFILE_VERSION));
+    t.insert("kind", string(kind.as_str()));
+    t.insert("id", string(id.as_str()));
+    t
+}
+
+fn relations_item(relations: &[Relation]) -> Option<Item> {
+    if relations.is_empty() {
+        return None;
+    }
+    let mut list = ArrayOfTables::new();
+    for r in relations {
+        let mut t = TomlTable::new();
+        t.insert("type", string(r.r#type.as_str()));
+        t.insert("target", string(r.target.as_str()));
+        if let Some(title) = &r.title {
+            t.insert("title", string(title));
+        }
+        list.push(t);
+    }
+    Some(Item::ArrayOfTables(list))
+}
+
+impl Kind {
+    /// The `kind` value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Record => "record",
+            Self::Hold => "hold",
+            Self::Aggregation => "aggregation",
+            Self::DisposalBatch => "disposal-batch",
+        }
+    }
+}
+
+impl HoldType {
+    /// The `type` value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Legal => "legal",
+            Self::Extension => "extension",
+        }
+    }
+}
+
+impl RelationType {
+    /// The `type` value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::MemberOf => "member-of",
+            Self::VersionOf => "version-of",
+            Self::Supersedes => "supersedes",
+            Self::Related => "related",
+        }
+    }
+}
+
+impl Record {
+    /// The `[records]` table as a flyleaf carries it (SPEC §2.1), which
+    /// [`read`] reads back as this value.
+    #[must_use]
+    pub fn to_toml(&self) -> TomlTable {
+        let mut r = profile_table(Kind::Record, &self.id);
+        r.insert("created", Item::Value(Value::from(self.created.to_toml())));
+        r.insert(
+            "captured",
+            Item::Value(Value::from(self.captured.to_toml())),
+        );
+        r.insert("mime_type", string(&self.mime_type));
+        r.insert(
+            "size",
+            Item::Value(Value::from(i64::try_from(self.size).unwrap_or(i64::MAX))),
+        );
+        r.insert("essential", Item::Value(Value::from(self.essential)));
+        if let Some(m) = &self.marking {
+            r.insert("marking", string(m));
+        }
+        r.insert("events_head", string(self.events_head.as_str()));
+        r.insert("creator", agent_table(&self.creator));
+        r.insert("custodian", agent_table(&self.custodian));
+        let mut fixity = TomlTable::new();
+        fixity.insert("content_sha256", string(self.content_sha256.as_str()));
+        r.insert("fixity", Item::Table(fixity));
+        if self.series.is_empty() {
+            r.insert("series", Item::Value(Value::Array(Array::new())));
+        } else {
+            let mut list = ArrayOfTables::new();
+            for s in &self.series {
+                let mut t = TomlTable::new();
+                t.insert("code", string(&s.code));
+                if let Some(trigger) = s.trigger {
+                    t.insert("trigger", Item::Value(Value::from(trigger.to_toml())));
+                }
+                if let Some(snap) = &s.snapshot {
+                    let mut st = TomlTable::new();
+                    for (k, v) in snap {
+                        st.insert(k, string(v));
+                    }
+                    t.insert("snapshot", Item::Table(st));
+                }
+                list.push(t);
+            }
+            r.insert("series", Item::ArrayOfTables(list));
+        }
+        if !self.holds.is_empty() {
+            let mut list = ArrayOfTables::new();
+            for h in &self.holds {
+                let mut t = TomlTable::new();
+                t.insert("matter", string(h.matter.as_str()));
+                t.insert("type", string(h.r#type.as_str()));
+                t.insert("applied", Item::Value(Value::from(h.applied.to_toml())));
+                list.push(t);
+            }
+            r.insert("holds", Item::ArrayOfTables(list));
+        }
+        if let Some(item) = relations_item(&self.relations) {
+            r.insert("relations", item);
+        }
+        if !self.components.is_empty() {
+            let mut list = ArrayOfTables::new();
+            for c in &self.components {
+                let mut t = TomlTable::new();
+                t.insert("member", string(&c.member));
+                t.insert("filename", string(&c.filename));
+                t.insert("mime_type", string(&c.mime_type));
+                t.insert(
+                    "size",
+                    Item::Value(Value::from(i64::try_from(c.size).unwrap_or(i64::MAX))),
+                );
+                t.insert("sha256", string(c.sha256.as_str()));
+                list.push(t);
+            }
+            r.insert("components", Item::ArrayOfTables(list));
+        }
+        r
+    }
+}
+
+impl Hold {
+    /// The `[records]` table of a hold matter (SPEC §4.1).
+    #[must_use]
+    pub fn to_toml(&self) -> TomlTable {
+        let mut r = profile_table(Kind::Hold, &self.id);
+        r.insert("title", string(&self.title));
+        r.insert("type", string(self.r#type.as_str()));
+        r.insert("mandate", string(&self.mandate));
+        r.insert("placed", Item::Value(Value::from(self.placed.to_toml())));
+        if let Some(end) = self.end_date {
+            r.insert("end_date", Item::Value(Value::from(end.to_toml())));
+        }
+        r.insert("scope", string(&self.scope));
+        r.insert(
+            "status",
+            string(match self.status {
+                HoldStatus::Active => "active",
+                HoldStatus::Released => "released",
+            }),
+        );
+        if let Some(released) = self.released {
+            r.insert("released", Item::Value(Value::from(released.to_toml())));
+        }
+        r.insert("events_head", string(self.events_head.as_str()));
+        r.insert("approved_by", agent_table(&self.approved_by));
+        r
+    }
+}
+
+impl Aggregation {
+    /// The `[records]` table of an aggregation (SPEC §5.1).
+    #[must_use]
+    pub fn to_toml(&self) -> TomlTable {
+        let mut r = profile_table(Kind::Aggregation, &self.id);
+        r.insert("title", string(&self.title));
+        if let Some(d) = &self.description {
+            r.insert("description", string(d));
+        }
+        if let Some(code) = &self.default_series {
+            r.insert("default_series", string(code));
+        }
+        r.insert(
+            "status",
+            string(match self.status {
+                AggregationStatus::Open => "open",
+                AggregationStatus::Closed => "closed",
+            }),
+        );
+        if let Some(closed) = self.closed {
+            r.insert("closed", Item::Value(Value::from(closed.to_toml())));
+        }
+        r.insert("events_head", string(self.events_head.as_str()));
+        if let Some(item) = relations_item(&self.relations) {
+            r.insert("relations", item);
+        }
+        r
+    }
+}
+
+/// A flyleaf for a new container under the profile: Slipcase 1.1, the
+/// content file, and the table.
+#[must_use]
+pub fn flyleaf(content_file: &str, table: TomlTable) -> DocumentMut {
+    let mut doc = DocumentMut::new();
+    doc.insert("slipcase_version", string("1.1"));
+    let mut content = TomlTable::new();
+    content.insert("file", string(content_file));
+    doc.insert("content", Item::Table(content));
+    doc.insert(TABLE, Item::Table(table));
+    doc
+}
+
+/// What a new container holds besides its flyleaf.
+pub struct New<'a> {
+    /// The content file's name.
+    pub content_file: &'a str,
+    /// The content file's bytes.
+    pub content: Box<dyn Read + 'a>,
+    /// The log [`crate::events::start`] began, whose head the table carries.
+    pub log: &'a [u8],
+    /// Further members by name: components, another profile's members.
+    pub members: Vec<(String, Box<dyn Read + 'a>)>,
+}
+
+/// Write a new container: the content file, the flyleaf, the log, and any
+/// further members.
+///
+/// # Errors
+///
+/// Packing or writing.
+pub fn create<W>(new: New<'_>, flyleaf: DocumentMut, out: W) -> Result<(), Error>
+where
+    W: std::io::Write + Seek,
+{
+    let mut packed = std::io::Cursor::new(Vec::new());
+    slpc::pack_reader(new.content_file, new.content, flyleaf, &mut packed)?;
+    let mut repack = Repack::new(std::io::Cursor::new(packed.into_inner()))
+        .member(EVENTS_MEMBER, std::io::Cursor::new(new.log));
+    for (name, reader) in new.members {
+        repack = repack.member(&name, reader);
+    }
+    repack.write(out)?;
+    Ok(())
 }
 
 /// Read the profile table from a flyleaf.

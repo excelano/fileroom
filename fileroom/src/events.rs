@@ -214,6 +214,31 @@ impl EventType {
     }
 }
 
+/// What a `reviewed` entry's `decision` may say (SPEC §8.4).
+pub const DECISIONS: &[&str] = &["reclassify", "extend", "destroy"];
+
+fn check_detail_values(
+    r#type: EventType,
+    detail: Option<&InlineTable>,
+    rule: &'static str,
+    at: &str,
+) -> Result<(), Malformed> {
+    if r#type == EventType::Reviewed {
+        let decision = detail
+            .and_then(|d| d.get("decision"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !DECISIONS.contains(&decision) {
+            return Err(Malformed::new(
+                rule,
+                format!("{at}detail.decision"),
+                format!("{decision:?} is not reclassify, extend, or destroy"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl fmt::Display for EventType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -304,7 +329,7 @@ impl NewEvent {
                 ));
             }
         }
-        Ok(())
+        check_detail_values(self.r#type, self.detail.as_ref(), rule, "")
     }
 }
 
@@ -433,6 +458,7 @@ fn check_log(
                     ));
                 }
             }
+            check_detail_values(r#type, detail.as_ref(), rule, &k.path(""))?;
             Ok(Event {
                 seq: entry.seq,
                 at: entry.at,
@@ -463,6 +489,100 @@ fn inline(table: &TomlTable, key: &str) -> InlineTable {
     }
 }
 
+/// A new container's log, begun by [`start`] and grown by [`Started::push`]
+/// before the container is packed.
+#[derive(Debug, Clone)]
+pub struct Started {
+    log: Log,
+    seed: Vec<u8>,
+    kind: Kind,
+}
+
+impl Started {
+    /// Chain another entry after the last, for a container that has more to
+    /// say at birth than its first entry: a capture that classifies, a
+    /// capture into a hold's scope.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Malformed`] for an event the kind does not define or one
+    /// missing what its type requires.
+    pub fn push(&mut self, event: &NewEvent) -> Result<Hash, Error> {
+        event.check(self.kind)?;
+        Ok(self.log.append(&self.seed, event.at, &event.body())?)
+    }
+
+    /// The log member's bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        self.log.bytes()
+    }
+
+    /// The hash the table's `events_head` carries.
+    #[must_use]
+    pub fn head(&self) -> Hash {
+        self.log.head().unwrap_or_else(|| Hash::of(&self.seed))
+    }
+}
+
+/// Start a log for a container of `kind` with identifier `id`: the first
+/// entry, which has to be the kind's first type (`captured`, `placed`,
+/// `created`), chained from the identifier (SPEC §2.8, §4.2, §5.2).
+///
+/// The caller writes [`Started::head`] into the table's `events_head` and
+/// packs [`Started::bytes`] as the log member; [`records::create`] packs.
+///
+/// # Errors
+///
+/// [`Error::Malformed`] for a kind with no log, an event of the wrong type,
+/// or one missing what its type requires.
+pub fn start(kind: Kind, id: &Identifier, event: &NewEvent) -> Result<Started, Error> {
+    let rule = rule_for(kind);
+    let Some(first) = EventType::first_for(kind) else {
+        return Err(Malformed::new(rule, EVENTS_MEMBER, "no log is defined for this kind").into());
+    };
+    event.check(kind)?;
+    if event.r#type != first {
+        return Err(Malformed::new(
+            rule,
+            "type",
+            format!("the first entry is {}, not {first}", event.r#type),
+        )
+        .into());
+    }
+    let mut started = Started {
+        log: Log::new(ENTRY),
+        seed: id.as_str().as_bytes().to_vec(),
+        kind,
+    };
+    started.push(event)?;
+    Ok(started)
+}
+
+/// An edit to a flyleaf, applied before the entry recording it is written.
+pub type Change<'a> = Box<dyn FnOnce(&mut DocumentMut) -> Result<(), Malformed> + 'a>;
+
+/// One change to the table and the event that records it.
+pub struct Step<'a> {
+    /// The edit.
+    pub change: Change<'a>,
+    /// The entry.
+    pub event: NewEvent,
+}
+
+impl<'a> Step<'a> {
+    /// A step from a change and its event.
+    pub fn new<F>(change: F, event: NewEvent) -> Self
+    where
+        F: FnOnce(&mut DocumentMut) -> Result<(), Malformed> + 'a,
+    {
+        Self {
+            change: Box::new(change),
+            event,
+        }
+    }
+}
+
 /// Rewrite a container: `change` edits the flyleaf, `event` records the edit,
 /// and the log's new head lands in `events_head`, all in one write (SPEC §2.8).
 ///
@@ -481,6 +601,23 @@ where
     W: Write + Seek,
     F: FnOnce(&mut DocumentMut) -> Result<(), Malformed>,
 {
+    append_steps(source, out, vec![Step::new(change, event.clone())])
+}
+
+/// [`append`] for several changes in one write: each step's change is
+/// applied and its entry chained after the last, in order, and the container
+/// is repacked once. A classification and the hold applications it causes
+/// are one write this way (SPEC §4.3).
+///
+/// # Errors
+///
+/// As [`append`]; and no steps is refused, since a repack that records
+/// nothing is not a change.
+pub fn append_steps<R, W>(source: &mut R, out: W, steps: Vec<Step<'_>>) -> Result<Hash, Error>
+where
+    R: Read + Seek,
+    W: Write + Seek,
+{
     let mut c = Container::read(&mut *source)?;
     let table = match records::read(c.flyleaf()) {
         Reading::Table(t) => t,
@@ -498,7 +635,12 @@ where
         Reading::Malformed(m) => return Err(m.into()),
     };
     let kind = table.kind();
-    event.check(kind)?;
+    if steps.is_empty() {
+        return Err(Malformed::new(rule_for(kind), EVENTS_MEMBER, "no step to record").into());
+    }
+    for step in &steps {
+        step.event.check(kind)?;
+    }
     let (Some(id), Some(head)) = (table.id(), table.events_head()) else {
         return Err(Malformed::new(
             rule_for(kind),
@@ -522,10 +664,12 @@ where
         .into());
     }
     let seed = id.as_str().as_bytes().to_vec();
-    let new_head = log.append(&seed, event.at, &event.body())?;
-
     let mut doc = c.flyleaf().clone();
-    change(&mut doc)?;
+    let mut new_head = head.clone();
+    for step in steps {
+        (step.change)(&mut doc)?;
+        new_head = log.append(&seed, step.event.at, &step.event.body())?;
+    }
     doc[records::TABLE]["events_head"] = Item::Value(Value::from(new_head.as_str()));
     drop(c);
     source.rewind()?;
@@ -550,9 +694,19 @@ pub fn append_in_place<F>(
 where
     F: FnOnce(&mut DocumentMut) -> Result<(), Malformed>,
 {
+    append_steps_in_place(path, vec![Step::new(change, event.clone())])
+}
+
+/// [`append_steps`] on a file, replaced in place once the new container is
+/// completely written.
+///
+/// # Errors
+///
+/// As [`append_steps`], and the file cannot be replaced.
+pub fn append_steps_in_place(path: &std::path::Path, steps: Vec<Step<'_>>) -> Result<Hash, Error> {
     let mut source = std::fs::File::open(path)?;
     let mut dest = slpc::Destination::in_place(path)?;
-    let head = append(&mut source, dest.writer(), change, event)?;
+    let head = append_steps(&mut source, dest.writer(), steps)?;
     drop(source);
     dest.commit()?;
     Ok(head)

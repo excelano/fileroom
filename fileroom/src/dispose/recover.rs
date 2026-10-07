@@ -26,8 +26,11 @@ pub struct Recovery<'a> {
     pub component: String,
     /// The settings, for the share roots and the organization's name.
     pub settings: &'a Settings,
-    /// A rendered certificate, or none for the text one.
-    pub certificate: Option<(String, Vec<u8>)>,
+    /// Renders the certificate from the batch's facts; none writes the text one.
+    pub certificate: Option<&'a crate::dispose::run::Renderer<'a>>,
+    /// Whether the operating person was verified, which a root may require
+    /// (SPEC §7.1).
+    pub operator_verified: bool,
 }
 
 /// What recovery wrote.
@@ -74,6 +77,9 @@ pub fn recover(
     recovery: &Recovery<'_>,
     now: &mut dyn FnMut() -> Instant,
 ) -> Result<Recovered, Error> {
+    if recovery.settings.requires_verified_operator() && !recovery.operator_verified {
+        return Err(Refusal::OperatorIdentity.into());
+    }
     let register = Register::open(recovery.root.join("register"));
     let sequence = recovery.sequence;
     if register.final_path(sequence).exists() {
@@ -125,17 +131,12 @@ pub fn recover(
         recovered: Some(at),
         recovered_by: Some(recovery.confirmed_by.clone()),
     };
-    let certificate = recovery.certificate.clone().unwrap_or_else(|| {
-        let facts = certificate::Facts {
-            organization: &recovery.settings.organization,
-            disposition: &disposition,
-            manifest: &manifest,
-        };
-        (
-            format!("certificate-{sequence:06}.txt"),
-            certificate::text(&facts).into_bytes(),
-        )
-    });
+    let facts = certificate::Facts {
+        organization: &recovery.settings.organization,
+        disposition: &disposition,
+        manifest: &manifest,
+    };
+    let certificate = certificate::render(recovery.certificate, &facts);
     register.finalize(
         sequence,
         &Completion {

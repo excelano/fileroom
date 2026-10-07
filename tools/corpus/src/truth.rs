@@ -20,7 +20,7 @@ pub struct Facts {
     pub series: Vec<SeriesFact>,
     pub holds: Vec<Identifier>,
     pub scope_matches_unapplied: Vec<Identifier>,
-    pub reviewed_on: Option<Date>,
+    pub reviewed: Option<(Date, &'static str)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,11 +103,14 @@ pub fn evaluate(
             (_, Some(max)) => (add_period(start, period), Some(add_period(start, max))),
             _ => (add_period(start, period), None),
         };
-        let due = match (action, facts.reviewed_on) {
-            (DisposalAction::Review, Some(reviewed)) if reviewed >= due => {
-                add_period(reviewed, period)
+        let (due, action) = match (action, facts.reviewed) {
+            (DisposalAction::Review, Some((reviewed, "destroy"))) if reviewed >= due => {
+                (reviewed, DisposalAction::Destroy)
             }
-            _ => due,
+            (DisposalAction::Review, Some((reviewed, _))) if reviewed >= due => {
+                (add_period(reviewed, period), action)
+            }
+            _ => (due, action),
         };
         dues.push(Due {
             code: fact.code.clone(),

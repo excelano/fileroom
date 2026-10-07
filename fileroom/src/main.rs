@@ -713,6 +713,7 @@ fn fixity(root: &Path, actor: String, actor_id: Option<String>, paths: &[PathBuf
         settings: &settings,
         actor: &actor,
         tool: &tool,
+        operator_verified: false,
     };
     let report = match fileroom::fixity::sweep(&sweep, paths, &mut fileroom::dates::utc_now) {
         Ok(r) => r,
@@ -756,6 +757,9 @@ fn fixity(root: &Path, actor: String, actor_id: Option<String>, paths: &[PathBuf
                 }
             }
         }
+    }
+    if report.events_withheld {
+        println!("no event appended: the root requires a verified operator (settings.toml: operator_identity = \"verified\") and this command has none");
     }
     println!(
         "{} checked: {} failed, {} moved, {} unreadable, {} not comparable; report {}",
@@ -998,6 +1002,24 @@ mod acting {
         answer.trim() == "yes"
     }
 
+    type Rendered = Box<fileroom::dispose::run::Renderer<'static>>;
+
+    /// A certificate file given on the command line, as a renderer that
+    /// hands back the same bytes whatever the facts.
+    fn rendered(path: Option<&Path>) -> Result<Option<Rendered>, Outcome> {
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let bytes = std::fs::read(path)
+            .map_err(|e| Outcome::BadInput(format!("{}: {e}", path.display())))?;
+        let name = path.file_name().map_or("certificate".to_owned(), |n| {
+            n.to_string_lossy().into_owned()
+        });
+        Ok(Some(Box::new(
+            move |_: &fileroom::dispose::certificate::Facts<'_>| (name.clone(), bytes.clone()),
+        )))
+    }
+
     pub fn dispose(
         root: &Path,
         plan_path: &Path,
@@ -1025,18 +1047,11 @@ mod acting {
             Ok(m) => m,
             Err(o) => return o,
         };
-        let certificate = match certificate {
-            None => None,
-            Some(path) => match std::fs::read(path) {
-                Ok(bytes) => Some((
-                    path.file_name().map_or("certificate".to_owned(), |n| {
-                        n.to_string_lossy().into_owned()
-                    }),
-                    bytes,
-                )),
-                Err(e) => return Outcome::BadInput(format!("{}: {e}", path.display())),
-            },
+        let certificate = match rendered(certificate) {
+            Ok(c) => c,
+            Err(o) => return o,
         };
+        let certificate = certificate.as_deref();
         describe(&plan);
         if !yes && !confirmed(plan.records.len()) {
             return Outcome::Refused("not confirmed".into());
@@ -1057,6 +1072,7 @@ mod acting {
             user,
             component: format!("fileroom {}", env!("CARGO_PKG_VERSION")),
             certificate,
+            operator_verified: false,
         };
         let summary = match dispose::dispose(&run, &mut fileroom::dates::utc_now, &mut |p| {
             let o = p.outcome;
@@ -1116,18 +1132,11 @@ mod acting {
             Ok(s) => s,
             Err(e) => return failed(&e),
         };
-        let certificate = match certificate {
-            None => None,
-            Some(path) => match std::fs::read(path) {
-                Ok(bytes) => Some((
-                    path.file_name().map_or("certificate".to_owned(), |n| {
-                        n.to_string_lossy().into_owned()
-                    }),
-                    bytes,
-                )),
-                Err(e) => return Outcome::BadInput(format!("{}: {e}", path.display())),
-            },
+        let certificate = match rendered(certificate) {
+            Ok(c) => c,
+            Err(o) => return o,
         };
+        let certificate = certificate.as_deref();
         println!("{unfinished}");
         println!("Recovery finishes this batch from its journal and from what is present now. It destroys nothing.");
         print!("Confirm that this batch's run is no longer executing on any machine. Type yes to continue: ");
@@ -1147,6 +1156,7 @@ mod acting {
             component: format!("fileroom {}", env!("CARGO_PKG_VERSION")),
             settings: &settings,
             certificate,
+            operator_verified: false,
         };
         match dispose::recover(&recovery, &mut fileroom::dates::utc_now) {
             Ok(r) => {

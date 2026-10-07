@@ -89,6 +89,9 @@ pub struct Report {
     pub scope: Vec<PathBuf>,
     /// Every path checked, in order.
     pub checked: Vec<Checked>,
+    /// Whether the events the findings earned were withheld because the
+    /// root requires a verified operator and the sweep had none (SPEC §9).
+    pub events_withheld: bool,
 }
 
 impl Report {
@@ -174,6 +177,13 @@ impl Report {
         counts.insert("unreadable", count(self.unreadable()));
         counts.insert("unclassified", count(self.unclassified()));
         doc.insert("counts", Item::Table(counts));
+        if self.events_withheld {
+            doc.insert("events_withheld", Item::Value(Value::from(true)));
+            doc.insert(
+                "events_withheld_because",
+                string("the root requires a verified operator (settings.toml: operator_identity = \"verified\") and this sweep had none"),
+            );
+        }
         let (mut failures, mut moves, mut unreadable, mut incomparable) = (
             ArrayOfTables::new(),
             ArrayOfTables::new(),
@@ -326,10 +336,16 @@ pub struct Sweep<'a> {
     pub actor: &'a Agent,
     /// The program, as `name version`.
     pub tool: &'a str,
+    /// Whether the operating person was verified against an identity
+    /// provider. Where the root requires that (SPEC §7.1) and this is false,
+    /// the sweep checks and reports but appends no event.
+    pub operator_verified: bool,
 }
 
 /// Sweep the paths (SPEC §9): check each, append `fixity_failed` and
 /// `moved_detected` to the records that earn them, and write the report.
+/// Under a root requiring a verified operator the sweep has none for, the
+/// events are withheld and the report says so.
 ///
 /// # Errors
 ///
@@ -341,14 +357,18 @@ pub fn sweep(
 ) -> Result<Report, Error> {
     let started = now();
     let mounts = Mounts::of(sweep.settings);
+    let events_withheld = sweep.settings.requires_verified_operator() && !sweep.operator_verified;
     let mut checked = Vec::new();
     for path in paths {
         let c = check(path, &mounts)?;
-        if let Finding::Record {
-            failures,
-            location,
-            logged,
-        } = &c.finding
+        if let (
+            false,
+            Finding::Record {
+                failures,
+                location,
+                logged,
+            },
+        ) = (events_withheld, &c.finding)
         {
             let mut event = |r#type: EventType, detail: InlineTable| NewEvent {
                 at: now(),
@@ -381,6 +401,7 @@ pub fn sweep(
         completed: now(),
         scope: paths.to_vec(),
         checked,
+        events_withheld,
     };
     let dir = sweep.root.join("fixity");
     std::fs::create_dir_all(&dir)?;

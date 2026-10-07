@@ -289,7 +289,7 @@ fn gather(record: &Record, events: &[Event], context: Context<'_>) -> Gathered {
             g.awaiting.push(entry.code.clone());
             continue;
         };
-        let action = row.disposal_action();
+        let mut action = row.disposal_action();
         if matches!(action, DisposalAction::Retain | DisposalAction::Transfer) {
             g.retained.push(entry.code.clone());
         }
@@ -301,8 +301,15 @@ fn gather(record: &Record, events: &[Event], context: Context<'_>) -> Gathered {
             _ => None,
         };
         if action == DisposalAction::Review {
-            if let Some(reviewed) = last_review(events, &entry.code).filter(|r| *r >= due) {
-                due = add_period(cutoff(reviewed, row.cutoff(), fiscal), period);
+            match last_review(events, &entry.code).filter(|(r, _)| *r >= due) {
+                Some((reviewed, Decision::Destroy)) => {
+                    due = reviewed;
+                    action = DisposalAction::Destroy;
+                }
+                Some((reviewed, _)) => {
+                    due = add_period(cutoff(reviewed, row.cutoff(), fiscal), period);
+                }
+                None => {}
             }
         }
         g.dues.push(SeriesDue {
@@ -317,9 +324,11 @@ fn gather(record: &Record, events: &[Event], context: Context<'_>) -> Gathered {
 
 /// Evaluate a record (SPEC §8).
 ///
-/// `events` is the record's verified log, read for `reviewed` decisions: a
-/// decision on or after a review series' due date restarts its retention
-/// from the review date, with the series' cutoff applied as for any trigger.
+/// `events` is the record's verified log, read for `reviewed` decisions
+/// (SPEC §8.4): the latest decision on or after a review series' due date
+/// counts; `destroy` makes the series due from the review date with action
+/// destroy, and `extend` or `reclassify` restarts its retention from the
+/// review date, with the series' cutoff applied as for any trigger.
 /// `unapplied` names the active matters whose scope matches the record but
 /// which its `holds` do not carry; the caller finds them with `SlipQL`
 /// (§4.3). A held record is never `review_due`.
@@ -417,19 +426,36 @@ pub fn evaluate(
     }
 }
 
-fn last_review(events: &[Event], code: &str) -> Option<Date> {
+/// A review's decision (SPEC §8.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decision {
+    Reclassify,
+    Extend,
+    Destroy,
+}
+
+/// The latest decision on a series, by the entry's date.
+fn last_review(events: &[Event], code: &str) -> Option<(Date, Decision)> {
+    let detail = |e: &Event, key: &str| {
+        e.detail
+            .as_ref()
+            .and_then(|d| d.get(key))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+    };
     events
         .iter()
         .filter(|e| e.r#type == EventType::Reviewed)
-        .filter(|e| {
-            e.detail
-                .as_ref()
-                .and_then(|d| d.get("code"))
-                .and_then(|v| v.as_str())
-                == Some(code)
+        .filter(|e| detail(e, "code").as_deref() == Some(code))
+        .map(|e| {
+            let decision = match detail(e, "decision").as_deref() {
+                Some("destroy") => Decision::Destroy,
+                Some("reclassify") => Decision::Reclassify,
+                _ => Decision::Extend,
+            };
+            (e.at.date, decision)
         })
-        .map(|e| e.at.date)
-        .max()
+        .max_by_key(|(date, _)| *date)
 }
 
 fn drifts(

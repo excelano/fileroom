@@ -46,7 +46,10 @@ wins: a held record past its maximum is not eligible.
 Anything short of that is one of three other outcomes. Not eligible, with
 every reason that applies: permanent, retained, held, awaiting its event,
 period not elapsed, no series, or a retired series. Review due, when a
-review series has fallen due and nobody has decided it. Cannot evaluate,
+review series has fallen due and nobody has decided it; a decision is a
+`reviewed` entry in the record's log naming the series and one of three
+words, reclassify, extend, or destroy, and only destroy lets the series
+fall through to destruction, from the date of the decision. Cannot evaluate,
 when the record or a series it is under cannot be read well enough to say:
 a series the schedule does not carry, a series whose row states no
 computable rule, a container that cannot be read, a version of Slipcase or
@@ -68,6 +71,16 @@ flyleaf as it was read. A plan nobody has approved is not executed.
 Approval is a statement made to the implementation, which records it and
 does not verify it; who may approve belongs to the organization, not to
 this software.
+
+An organization that requires its operators to be signed in says so in the
+records root's settings (`operator_identity = "verified"`), and this crate
+then refuses to destroy, to recover a batch, or to append a fixity event in
+that root, because the `fileroom` command verifies nobody. Reading,
+checking, and verifying stay open. The setting is not an access control:
+anyone with write access to the files can change them with any tool, and
+the organization's share permissions decide who has that. By setting it,
+an organization chooses not to have destruction scripted outside an
+implementation that verifies who is running it.
 
 ## Destruction
 

@@ -63,3 +63,17 @@ fn settings_rules_are_refused_by_key() {
         Err(Error::Toml(_))
     ));
 }
+
+#[test]
+fn operator_identity_takes_its_one_value() {
+    let required =
+        Settings::parse(&format!("operator_identity = \"verified\"\n{EXAMPLE}")).unwrap();
+    assert!(required.requires_verified_operator());
+    assert!(!Settings::parse(EXAMPLE)
+        .unwrap()
+        .requires_verified_operator());
+    assert_eq!(
+        refused(&format!("operator_identity = \"trusted\"\n{EXAMPLE}")),
+        "operator_identity"
+    );
+}

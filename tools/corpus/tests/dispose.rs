@@ -163,6 +163,16 @@ fn run_plan(
     plan: &Plan,
     matcher: &dyn fileroom::dispose::ScopeMatcher,
 ) -> Result<fileroom::dispose::Summary, Error> {
+    run_plan_as(corpus, plan, matcher, false, None)
+}
+
+fn run_plan_as(
+    corpus: &Corpus,
+    plan: &Plan,
+    matcher: &dyn fileroom::dispose::ScopeMatcher,
+    operator_verified: bool,
+    certificate: Option<&fileroom::dispose::run::Renderer<'_>>,
+) -> Result<fileroom::dispose::Summary, Error> {
     let run = Run {
         root: &corpus.root(),
         plan,
@@ -171,9 +181,77 @@ fn run_plan(
         host: "test-host".into(),
         user: "tester".into(),
         component: "fileroom test".into(),
-        certificate: None,
+        certificate,
+        operator_verified,
     };
     dispose(&run, &mut clock(), &mut |_| {})
+}
+
+fn require_verified_operator(corpus: &mut Corpus) {
+    let path = corpus.root().join("settings.toml");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.insert_str(0, "operator_identity = \"verified\"\n");
+    std::fs::write(&path, &text).unwrap();
+    corpus.settings = Settings::parse(&text).unwrap();
+}
+
+#[test]
+fn a_root_requiring_a_verified_operator_refuses_a_run_without_one() {
+    let mut corpus = Corpus::generate(120, 31, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    require_verified_operator(&mut corpus);
+    let matcher = scopes(&corpus);
+    let err = run_plan_as(&corpus, &plan, &matcher, false, None).unwrap_err();
+    assert!(
+        matches!(err, Error::Refused(Refusal::OperatorIdentity)),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("operator_identity"));
+    let register = Register::open(corpus.root().join("register"));
+    assert_eq!(register.last().unwrap(), 1, "nothing was claimed");
+    for p in &plan.records {
+        assert!(p.path.exists(), "{}", p.path.display());
+    }
+    let summary = run_plan_as(&corpus, &plan, &matcher, true, None).unwrap();
+    assert_eq!(summary.destroyed(), plan.records.len());
+}
+
+#[test]
+fn the_certificate_is_rendered_from_the_completed_manifest() {
+    let corpus = Corpus::generate(150, 32, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    let matcher = scopes(&corpus);
+    let seen = std::cell::RefCell::new(None);
+    let render = |facts: &fileroom::dispose::certificate::Facts<'_>| {
+        *seen.borrow_mut() = Some((
+            facts.manifest.destroyed(),
+            facts.disposition.sequence,
+            facts.organization.to_owned(),
+        ));
+        (
+            format!("certificate-{:06}.pdf", facts.disposition.sequence),
+            b"%PDF-1.7 rendered by the test".to_vec(),
+        )
+    };
+    let summary = run_plan_as(&corpus, &plan, &matcher, false, Some(&render)).unwrap();
+    assert_eq!(
+        seen.borrow().clone(),
+        Some((
+            summary.destroyed() as u64,
+            summary.sequence,
+            "Example Corporation".to_owned()
+        ))
+    );
+    let register = Register::open(corpus.root().join("register"));
+    let mut c = Container::open(register.final_path(summary.sequence)).unwrap();
+    assert_eq!(
+        c.flyleaf()["content"]["file"].as_str(),
+        Some("certificate-000002.pdf")
+    );
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut c.content().unwrap(), &mut bytes).unwrap();
+    assert_eq!(bytes, b"%PDF-1.7 rendered by the test");
+    assert!(register.verify().unwrap().intact());
 }
 
 #[test]

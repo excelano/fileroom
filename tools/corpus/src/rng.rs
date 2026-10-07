@@ -11,7 +11,7 @@ impl Rng {
         Self(seed)
     }
 
-    pub fn next(&mut self) -> u64 {
+    pub fn draw(&mut self) -> u64 {
         self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
         let mut z = self.0;
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -20,7 +20,7 @@ impl Rng {
     }
 
     pub fn below(&mut self, n: u64) -> u64 {
-        self.next() % n.max(1)
+        self.draw() % n.max(1)
     }
 
     pub fn range(&mut self, low: i64, high: i64) -> i64 {
@@ -37,7 +37,7 @@ impl Rng {
 
     /// A UUID version 7 whose timestamp is the instant given, in milliseconds.
     pub fn uuid7(&mut self, unix_ms: u64) -> Identifier {
-        let r = self.next();
+        let r = self.draw();
         let s = format!(
             "{:08x}-{:04x}-7{:03x}-{:04x}-{:012x}",
             (unix_ms >> 16) & 0xFFFF_FFFF,

@@ -226,9 +226,16 @@ pub struct Run<'a> {
     pub user: String,
     /// This implementation, as `name version`.
     pub component: String,
-    /// A rendered certificate as file name and bytes, or none for the text one.
-    pub certificate: Option<(String, Vec<u8>)>,
+    /// Renders the certificate from the batch's facts once every outcome
+    /// is known, as file name and bytes; none writes the text certificate.
+    pub certificate: Option<&'a Renderer<'a>>,
+    /// Whether the operating person was verified against an identity
+    /// provider, which a root may require (SPEC §7.1).
+    pub operator_verified: bool,
 }
+
+/// What renders a certificate: the facts in, the file name and bytes out.
+pub type Renderer<'a> = dyn Fn(&certificate::Facts<'_>) -> (String, Vec<u8>) + 'a;
 
 /// Execute a plan (SPEC §6.4). `now` supplies every instant written.
 ///
@@ -239,9 +246,11 @@ pub struct Run<'a> {
 ///
 /// # Errors
 ///
-/// [`Refusal::Unapproved`] for a plan nobody approved, the register's
-/// refusals, a context that is not the plan's, and I/O on the register. A
-/// record that cannot be destroyed is an outcome, never an error.
+/// [`Refusal::Unapproved`] for a plan nobody approved,
+/// [`Refusal::OperatorIdentity`] where the root requires a verified operator
+/// and the run has none, the register's refusals, a context that is not the
+/// plan's, and I/O on the register. A record that cannot be destroyed is an
+/// outcome, never an error.
 pub fn dispose(
     run: &Run<'_>,
     now: &mut dyn FnMut() -> Instant,
@@ -250,6 +259,9 @@ pub fn dispose(
     let plan = run.plan;
     if plan.approved_by.is_empty() {
         return Err(Refusal::Unapproved.into());
+    }
+    if run.context.settings.requires_verified_operator() && !run.operator_verified {
+        return Err(Refusal::OperatorIdentity.into());
     }
     if run.context.as_of != plan.evaluated || run.context.schedule_version != plan.schedule_version
     {
@@ -325,17 +337,12 @@ pub fn dispose(
         recovered: None,
         recovered_by: None,
     };
-    let certificate = run.certificate.clone().unwrap_or_else(|| {
-        let facts = certificate::Facts {
-            organization: &run.context.settings.organization,
-            disposition: &disposition,
-            manifest: &manifest,
-        };
-        (
-            format!("certificate-{sequence:06}.txt"),
-            certificate::text(&facts).into_bytes(),
-        )
-    });
+    let facts = certificate::Facts {
+        organization: &run.context.settings.organization,
+        disposition: &disposition,
+        manifest: &manifest,
+    };
+    let certificate = certificate::render(run.certificate, &facts);
     register.finalize(
         sequence,
         &Completion {

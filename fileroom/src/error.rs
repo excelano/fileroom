@@ -126,6 +126,9 @@ pub enum Refusal {
     NotUnfinished(u32),
     /// A plan nobody approved is not executed.
     Unapproved,
+    /// The root requires a verified operator (SPEC §7.1) and this run has
+    /// none, so nothing in the root is changed (§9).
+    OperatorIdentity,
 }
 
 impl fmt::Display for Refusal {
@@ -135,6 +138,9 @@ impl fmt::Display for Refusal {
             Self::AlreadyFinal(n) => write!(f, "batch {n:06} is already final"),
             Self::NotUnfinished(n) => write!(f, "batch {n:06} is not an unfinished batch"),
             Self::Unapproved => f.write_str("the plan records no approval"),
+            Self::OperatorIdentity => f.write_str(
+                "the root requires a verified operator (settings.toml: operator_identity = \"verified\") and this run has none",
+            ),
         }
     }
 }

@@ -4,15 +4,16 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
+use std::io::Read;
+
 use fileroom::conventions::{Agent, Date, Hash, Identifier, Instant};
-use fileroom::events::EventType;
+use fileroom::events::{self, EventType, NewEvent, Started};
 use fileroom::location::Location;
-use fileroom::log::Log;
-use fileroom::records::{COMPONENTS_PREFIX, EVENTS_MEMBER, PROFILE, PROFILE_VERSION};
-use fileroom::slpc::toml_edit::{
-    Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value,
+use fileroom::records::{
+    self, Aggregation as AggregationTable, AggregationStatus, Component, Hold, HoldEntry,
+    HoldStatus, HoldType, Kind, New, Relation, RelationType, Series, COMPONENTS_PREFIX,
 };
-use fileroom::slpc::Repack;
+use fileroom::slpc::toml_edit::{InlineTable, Item, Table, Value};
 
 pub fn pdf(title: &str) -> Vec<u8> {
     format!(
@@ -81,13 +82,6 @@ pub struct Record {
     pub tool: String,
 }
 
-fn profile_table() -> Table {
-    let mut t = Table::new();
-    t.insert("profile", Item::Value(Value::from(PROFILE)));
-    t.insert("profile_version", Item::Value(Value::from(PROFILE_VERSION)));
-    t
-}
-
 fn string(s: &str) -> Item {
     Item::Value(Value::from(s))
 }
@@ -100,12 +94,78 @@ pub fn detail(pairs: &[(&str, Value)]) -> Option<InlineTable> {
     Some(t)
 }
 
+fn event(
+    at: Instant,
+    r#type: EventType,
+    actor: &Agent,
+    tool: &str,
+    location: Option<&Location>,
+    detail: Option<InlineTable>,
+) -> NewEvent {
+    NewEvent {
+        at,
+        r#type,
+        actor: actor.clone(),
+        tool: tool.to_owned(),
+        location: location.cloned(),
+        detail,
+    }
+}
+
+fn hold_type(kind: &str) -> HoldType {
+    if kind == "legal" {
+        HoldType::Legal
+    } else {
+        HoldType::Extension
+    }
+}
+
+fn relation_type(kind: &str) -> RelationType {
+    match kind {
+        "member-of" => RelationType::MemberOf,
+        "version-of" => RelationType::VersionOf,
+        "supersedes" => RelationType::Supersedes,
+        _ => RelationType::Related,
+    }
+}
+
+fn pack(content_file: &str, content: &[u8], table: Table, log: &[u8]) -> Vec<u8> {
+    let doc = records::flyleaf(content_file, table);
+    let mut out = Cursor::new(Vec::new());
+    records::create(
+        New {
+            content_file,
+            content: Box::new(Cursor::new(content.to_vec())),
+            log,
+            members: Vec::new(),
+        },
+        doc,
+        &mut out,
+    )
+    .expect("create");
+    out.into_inner()
+}
+
 impl Record {
     pub fn build(&self, tamper: &Tamper) -> Vec<u8> {
-        let mut log = Log::new("event");
-        let seed = self.id.as_str().as_bytes().to_vec();
+        let ev = |at: Instant, r#type: EventType, detail: Option<InlineTable>| {
+            event(
+                at,
+                r#type,
+                &self.custodian,
+                &self.tool,
+                Some(&self.location),
+                detail,
+            )
+        };
+        let mut log = events::start(
+            Kind::Record,
+            &self.id,
+            &ev(self.captured, EventType::Captured, None),
+        )
+        .expect("first entry");
         let mut at = self.captured;
-        let mut append = |log: &mut Log,
+        let mut append = |log: &mut Started,
                           r#type: EventType,
                           detail: Option<InlineTable>,
                           when: Option<Instant>| {
@@ -114,23 +174,8 @@ impl Record {
             } else {
                 at.minute = (at.minute + 1) % 60;
             }
-            let mut body = Table::new();
-            body.insert("type", string(r#type.as_str()));
-            body.insert(
-                "actor",
-                Item::Value(Value::InlineTable(self.custodian.to_toml())),
-            );
-            body.insert("tool", string(&self.tool));
-            body.insert(
-                "location",
-                Item::Value(Value::InlineTable(self.location.to_table())),
-            );
-            if let Some(d) = detail {
-                body.insert("detail", Item::Value(Value::InlineTable(d)));
-            }
-            log.append(&seed, at, &body).expect("entry serializes");
+            log.push(&ev(at, r#type, detail)).expect("entry serializes");
         };
-        append(&mut log, EventType::Captured, None, Some(self.captured));
         for s in &self.series {
             append(
                 &mut log,
@@ -183,7 +228,7 @@ impl Record {
         for e in &self.events {
             append(&mut log, e.r#type, e.detail.clone(), Some(e.at));
         }
-        let mut head = log.head().expect("captured at least");
+        let mut head = log.head();
         let mut log_bytes = log.bytes().to_vec();
         match tamper {
             Tamper::BrokenChain => {
@@ -196,111 +241,80 @@ impl Record {
             _ => {}
         }
 
-        let mut doc = DocumentMut::new();
-        doc.insert("slipcase_version", string("1.1"));
-        let mut content = Table::new();
-        content.insert("file", string(&self.content_name));
-        doc.insert("content", Item::Table(content));
-        let mut r = profile_table();
-        r.insert("kind", string("record"));
-        r.insert("id", string(self.id.as_str()));
-        if !matches!(tamper, Tamper::MissingField) {
-            r.insert("created", Item::Value(Value::from(self.created.to_toml())));
-        }
-        r.insert(
-            "captured",
-            Item::Value(Value::from(self.captured.to_toml())),
-        );
-        r.insert("mime_type", string(&self.mime_type));
-        if matches!(tamper, Tamper::TypeMismatch) {
-            r.insert("size", string(&self.content.len().to_string()));
-        } else {
-            r.insert("size", Item::Value(Value::from(self.content.len() as i64)));
-        }
-        r.insert("essential", Item::Value(Value::from(self.essential)));
-        if let Some(m) = &self.marking {
-            r.insert("marking", string(m));
-        }
-        r.insert("events_head", string(head.as_str()));
-        r.insert(
-            "creator",
-            Item::Table(inline_to_table(&self.creator.to_toml())),
-        );
-        r.insert(
-            "custodian",
-            Item::Table(inline_to_table(&self.custodian.to_toml())),
-        );
-        let mut fixity = Table::new();
-        fixity.insert("content_sha256", string(Hash::of(&self.content).as_str()));
-        r.insert("fixity", Item::Table(fixity));
-        let mut series = ArrayOfTables::new();
-        for s in &self.series {
-            let mut t = Table::new();
-            t.insert("code", string(&s.code));
-            if let Some(trigger) = s.trigger {
-                t.insert("trigger", Item::Value(Value::from(trigger.to_toml())));
-            }
-            if let Some(snap) = &s.snapshot {
-                let mut st = Table::new();
-                for (k, v) in snap {
-                    st.insert(k, string(v));
-                }
-                t.insert("snapshot", Item::Table(st));
-            }
-            series.push(t);
-        }
-        if self.series.is_empty() {
-            r.insert("series", Item::Value(Value::Array(Array::new())));
-        } else {
-            r.insert("series", Item::ArrayOfTables(series));
-        }
-        if !self.holds.is_empty() {
-            let mut holds = ArrayOfTables::new();
-            for (matter, kind, applied) in &self.holds {
-                let mut t = Table::new();
-                t.insert("matter", string(matter.as_str()));
-                t.insert("type", string(kind));
-                t.insert("applied", Item::Value(Value::from(applied.to_toml())));
-                holds.push(t);
-            }
-            r.insert("holds", Item::ArrayOfTables(holds));
-        }
-        if !self.relations.is_empty() {
-            let mut rels = ArrayOfTables::new();
-            for (kind, target, title) in &self.relations {
-                let mut t = Table::new();
-                t.insert(
-                    "type",
-                    string(if matches!(tamper, Tamper::UnknownRelation) {
-                        "cites"
-                    } else {
-                        kind
-                    }),
-                );
-                t.insert("target", string(target.as_str()));
-                t.insert("title", string(title));
-                rels.push(t);
-            }
-            r.insert("relations", Item::ArrayOfTables(rels));
-        }
         let listed: Vec<&ComponentSpec> = match tamper {
             Tamper::ComponentUnlisted => self.components.iter().skip(1).collect(),
             _ => self.components.iter().collect(),
         };
-        if !listed.is_empty() {
-            let mut comps = ArrayOfTables::new();
-            for c in &listed {
-                let mut t = Table::new();
-                t.insert("member", string(&c.member));
-                t.insert("filename", string(&c.filename));
-                t.insert("mime_type", string(&c.mime_type));
-                t.insert("size", Item::Value(Value::from(c.bytes.len() as i64)));
-                t.insert("sha256", string(Hash::of(&c.bytes).as_str()));
-                comps.push(t);
-            }
-            r.insert("components", Item::ArrayOfTables(comps));
+        let mut table = records::Record {
+            id: self.id.clone(),
+            created: self.created,
+            captured: self.captured,
+            mime_type: self.mime_type.clone(),
+            size: self.content.len() as u64,
+            essential: self.essential,
+            marking: self.marking.clone(),
+            events_head: head,
+            creator: self.creator.clone(),
+            custodian: self.custodian.clone(),
+            content_sha256: Hash::of(&self.content),
+            series: self
+                .series
+                .iter()
+                .map(|s| Series {
+                    code: s.code.clone(),
+                    trigger: s.trigger,
+                    snapshot: s.snapshot.clone(),
+                })
+                .collect(),
+            holds: self
+                .holds
+                .iter()
+                .map(|(matter, kind, applied)| HoldEntry {
+                    matter: matter.clone(),
+                    r#type: hold_type(kind),
+                    applied: *applied,
+                })
+                .collect(),
+            relations: self
+                .relations
+                .iter()
+                .map(|(kind, target, title)| Relation {
+                    r#type: relation_type(kind),
+                    target: target.clone(),
+                    title: Some(title.clone()),
+                })
+                .collect(),
+            components: listed
+                .iter()
+                .map(|c| Component {
+                    member: c.member.clone(),
+                    filename: c.filename.clone(),
+                    mime_type: c.mime_type.clone(),
+                    size: c.bytes.len() as u64,
+                    sha256: Hash::of(&c.bytes),
+                })
+                .collect(),
         }
-        doc.insert("records", Item::Table(r));
+        .to_toml();
+        match tamper {
+            Tamper::MissingField => {
+                table.remove("created");
+            }
+            Tamper::TypeMismatch => {
+                table.insert("size", string(&self.content.len().to_string()));
+            }
+            Tamper::UnknownRelation => {
+                if let Some(first) = table
+                    .get_mut("relations")
+                    .and_then(Item::as_array_of_tables_mut)
+                    .and_then(|rels| rels.get_mut(0))
+                {
+                    first.insert("type", string("cites"));
+                }
+            }
+            _ => {}
+        }
+        let mut doc = records::flyleaf(&self.content_name, table);
         if self.second_profile {
             let mut h = Table::new();
             h.insert(
@@ -321,30 +335,39 @@ impl Record {
             }
             _ => self.content.clone(),
         };
-        let mut packed = Cursor::new(Vec::new());
-        fileroom::slpc::pack_reader(&self.content_name, Cursor::new(content), doc, &mut packed)
-            .expect("pack");
-        let mut repack = Repack::new(Cursor::new(packed.into_inner()))
-            .member(EVENTS_MEMBER, Cursor::new(&log_bytes));
         let packed_components: Vec<&ComponentSpec> = match tamper {
             Tamper::ComponentMissing => self.components.iter().skip(1).collect(),
             _ => self.components.iter().collect(),
         };
-        for c in &packed_components {
-            repack = repack.member(&c.member, Cursor::new(&c.bytes));
-        }
-        let handover = b"[handover]\nitems = 1\n";
+        let mut members: Vec<(String, Box<dyn Read>)> = packed_components
+            .iter()
+            .map(|c| {
+                (
+                    c.member.clone(),
+                    Box::new(Cursor::new(c.bytes.clone())) as Box<dyn Read>,
+                )
+            })
+            .collect();
         if self.second_profile {
-            repack = repack.member("handover/manifest.toml", Cursor::new(&handover[..]));
+            members.push((
+                "handover/manifest.toml".into(),
+                Box::new(Cursor::new(b"[handover]\nitems = 1\n".to_vec())),
+            ));
         }
         let mut out = Cursor::new(Vec::new());
-        repack.write(&mut out).expect("repack");
+        records::create(
+            New {
+                content_file: &self.content_name,
+                content: Box::new(Cursor::new(content)),
+                log: &log_bytes,
+                members,
+            },
+            doc,
+            &mut out,
+        )
+        .expect("create");
         out.into_inner()
     }
-}
-
-fn inline_to_table(t: &InlineTable) -> Table {
-    t.clone().into_table()
 }
 
 pub fn component(n: usize, filename: &str, bytes: Vec<u8>) -> ComponentSpec {
@@ -374,95 +397,49 @@ pub struct Matter {
     pub tool: String,
 }
 
-fn simple_log(
-    id: &Identifier,
-    actor: &Agent,
-    tool: &str,
-    entries: &[(Instant, EventType, Option<InlineTable>)],
-) -> (Vec<u8>, Hash) {
-    let mut log = Log::new("event");
-    for (at, kind, detail) in entries {
-        let mut body = Table::new();
-        body.insert("type", string(kind.as_str()));
-        body.insert("actor", Item::Value(Value::InlineTable(actor.to_toml())));
-        body.insert("tool", string(tool));
-        if let Some(d) = detail {
-            body.insert("detail", Item::Value(Value::InlineTable(d.clone())));
-        }
-        log.append(id.as_str().as_bytes(), *at, &body)
-            .expect("entry");
-    }
-    let head = log.head().expect("entries");
-    (log.bytes().to_vec(), head)
-}
-
-fn pack_with_log(content_name: &str, content: &[u8], doc: DocumentMut, log: &[u8]) -> Vec<u8> {
-    let mut packed = Cursor::new(Vec::new());
-    fileroom::slpc::pack_reader(
-        content_name,
-        Cursor::new(content.to_vec()),
-        doc,
-        &mut packed,
-    )
-    .expect("pack");
-    let mut out = Cursor::new(Vec::new());
-    Repack::new(Cursor::new(packed.into_inner()))
-        .member(EVENTS_MEMBER, Cursor::new(log))
-        .write(&mut out)
-        .expect("repack");
-    out.into_inner()
-}
-
 impl Matter {
     pub fn build(&self) -> Vec<u8> {
-        let mut entries = vec![(
-            crate::dates::instant(self.placed, 9, 0, 0),
-            EventType::Placed,
-            None,
-        )];
+        let ev = |at: Instant, r#type: EventType, detail: Option<InlineTable>| {
+            event(at, r#type, &self.approved_by, &self.tool, None, detail)
+        };
+        let mut log = events::start(
+            Kind::Hold,
+            &self.id,
+            &ev(
+                crate::dates::instant(self.placed, 9, 0, 0),
+                EventType::Placed,
+                None,
+            ),
+        )
+        .expect("first entry");
         if let Some(released) = self.released {
-            entries.push((
+            log.push(&ev(
                 crate::dates::instant(released, 9, 0, 0),
                 EventType::Released,
                 detail(&[("reason", Value::from("matter closed"))]),
-            ));
+            ))
+            .expect("entry");
         }
-        let (log, head) = simple_log(&self.id, &self.approved_by, &self.tool, &entries);
-        let mut doc = DocumentMut::new();
-        doc.insert("slipcase_version", string("1.1"));
-        let mut content = Table::new();
-        content.insert("file", string("hold-notice.txt"));
-        doc.insert("content", Item::Table(content));
-        let mut r = profile_table();
-        r.insert("kind", string("hold"));
-        r.insert("id", string(self.id.as_str()));
-        r.insert("title", string(&self.title));
-        r.insert("type", string(self.kind));
-        r.insert("mandate", string(&self.mandate));
-        r.insert("placed", Item::Value(Value::from(self.placed.to_toml())));
-        if let Some(end) = self.end_date {
-            r.insert("end_date", Item::Value(Value::from(end.to_toml())));
-        }
-        r.insert(
-            "status",
-            string(if self.released.is_some() {
-                "released"
+        let table = Hold {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            r#type: hold_type(self.kind),
+            mandate: self.mandate.clone(),
+            approved_by: self.approved_by.clone(),
+            placed: self.placed,
+            end_date: self.end_date,
+            scope: self.scope.clone(),
+            status: if self.released.is_some() {
+                HoldStatus::Released
             } else {
-                "active"
-            }),
-        );
-        if let Some(released) = self.released {
-            r.insert("released", Item::Value(Value::from(released.to_toml())));
+                HoldStatus::Active
+            },
+            released: self.released,
+            events_head: log.head(),
         }
-        r.insert("scope", string(&self.scope));
-        r.insert("events_head", string(head.as_str()));
-        r.insert(
-            "approved_by",
-            Item::Table(inline_to_table(&self.approved_by.to_toml())),
-        );
-        doc.insert("records", Item::Table(r));
+        .to_toml();
         let notice = format!("{}\n\n{}\n", self.title, self.mandate);
-        pack_with_log("hold-notice.txt", notice.as_bytes(), doc, &log)
+        pack("hold-notice.txt", notice.as_bytes(), table, log.bytes())
     }
 }
 
@@ -479,68 +456,66 @@ pub struct Aggregation {
 
 impl Aggregation {
     pub fn build(&self) -> Vec<u8> {
-        let mut entries = vec![(
-            crate::dates::instant(self.created, 9, 0, 0),
-            EventType::Created,
-            None,
-        )];
+        let ev = |at: Instant, r#type: EventType, detail: Option<InlineTable>| {
+            event(at, r#type, &self.actor, &self.tool, None, detail)
+        };
+        let mut log = events::start(
+            Kind::Aggregation,
+            &self.id,
+            &ev(
+                crate::dates::instant(self.created, 9, 0, 0),
+                EventType::Created,
+                None,
+            ),
+        )
+        .expect("first entry");
         if let Some((parent, _)) = &self.parent {
-            entries.push((
+            log.push(&ev(
                 crate::dates::instant(self.created, 9, 1, 0),
                 EventType::RelationAdded,
                 detail(&[
                     ("type", Value::from("member-of")),
                     ("target", Value::from(parent.as_str())),
                 ]),
-            ));
+            ))
+            .expect("entry");
         }
         if let Some(closed) = self.closed {
-            entries.push((
+            log.push(&ev(
                 crate::dates::instant(closed, 17, 0, 0),
                 EventType::Closed,
                 None,
-            ));
+            ))
+            .expect("entry");
         }
-        let (log, head) = simple_log(&self.id, &self.actor, &self.tool, &entries);
-        let mut doc = DocumentMut::new();
-        doc.insert("slipcase_version", string("1.1"));
-        let mut content = Table::new();
-        content.insert("file", string("cover.txt"));
-        doc.insert("content", Item::Table(content));
-        let mut r = profile_table();
-        r.insert("kind", string("aggregation"));
-        r.insert("id", string(self.id.as_str()));
-        r.insert("title", string(&self.title));
-        r.insert(
-            "status",
-            string(if self.closed.is_some() {
-                "closed"
+        let table = AggregationTable {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            description: None,
+            default_series: self.default_series.clone(),
+            status: if self.closed.is_some() {
+                AggregationStatus::Closed
             } else {
-                "open"
-            }),
-        );
-        if let Some(closed) = self.closed {
-            r.insert("closed", Item::Value(Value::from(closed.to_toml())));
+                AggregationStatus::Open
+            },
+            closed: self.closed,
+            relations: self
+                .parent
+                .iter()
+                .map(|(parent, title)| Relation {
+                    r#type: RelationType::MemberOf,
+                    target: parent.clone(),
+                    title: Some(title.clone()),
+                })
+                .collect(),
+            events_head: log.head(),
         }
-        if let Some(s) = &self.default_series {
-            r.insert("default_series", string(s));
-        }
-        r.insert("events_head", string(head.as_str()));
-        if let Some((parent, title)) = &self.parent {
-            let mut rels = ArrayOfTables::new();
-            let mut t = Table::new();
-            t.insert("type", string("member-of"));
-            t.insert("target", string(parent.as_str()));
-            t.insert("title", string(title));
-            rels.push(t);
-            r.insert("relations", Item::ArrayOfTables(rels));
-        }
-        doc.insert("records", Item::Table(r));
-        pack_with_log(
+        .to_toml();
+        pack(
             "cover.txt",
             format!("{}\n", self.title).as_bytes(),
-            doc,
-            &log,
+            table,
+            log.bytes(),
         )
     }
 }

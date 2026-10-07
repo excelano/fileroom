@@ -57,6 +57,7 @@ impl Fixture {
             settings: &self.settings,
             actor: &actor,
             tool: "fileroom test",
+            operator_verified: false,
         };
         let mut now = || {
             self.tick.set(self.tick.get() + 1);
@@ -276,4 +277,35 @@ fn a_second_sweep_sees_the_appended_log_intact() {
         panic!("still conformant");
     };
     assert_eq!(f.reports().len(), 2);
+}
+
+#[test]
+fn under_a_root_requiring_a_verified_operator_the_sweep_reports_and_appends_nothing() {
+    let mut f = Fixture::new();
+    let settings_path = f.dir.path().join("root/settings.toml");
+    let mut text = std::fs::read_to_string(&settings_path).unwrap();
+    text.insert_str(0, "operator_identity = \"verified\"\n");
+    std::fs::write(&settings_path, &text).unwrap();
+    f.settings = Settings::parse(&text).unwrap();
+    let content = f.place("valid/full", LOGGED);
+    rewrite(&content, |r| {
+        r.content(
+            "invoice-2024-0117.pdf",
+            Cursor::new(b"altered after capture".to_vec()),
+        )
+    });
+    let before = std::fs::read(&content).unwrap();
+    let report = f.sweep(std::slice::from_ref(&content));
+    assert_eq!(report.failed(), 1);
+    assert!(report.events_withheld);
+    assert_eq!(
+        std::fs::read(&content).unwrap(),
+        before,
+        "nothing was appended"
+    );
+    assert_eq!(log_of(&content).len(), 2);
+    let written =
+        std::fs::read_to_string(f.dir.path().join("root/fixity").join(&f.reports()[0])).unwrap();
+    assert!(written.contains("events_withheld = true"));
+    assert!(written.contains("operator_identity"));
 }

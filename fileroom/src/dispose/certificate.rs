@@ -17,6 +17,22 @@ pub struct Facts<'a> {
     pub manifest: &'a Manifest,
 }
 
+/// The caller's renderer where there is one, the text certificate where
+/// there is none.
+#[must_use]
+pub fn render(
+    renderer: Option<&crate::dispose::run::Renderer<'_>>,
+    facts: &Facts<'_>,
+) -> (String, Vec<u8>) {
+    match renderer {
+        Some(render) => render(facts),
+        None => (
+            format!("certificate-{:06}.txt", facts.disposition.sequence),
+            text(facts).into_bytes(),
+        ),
+    }
+}
+
 /// Render the text certificate.
 #[must_use]
 pub fn text(facts: &Facts<'_>) -> String {

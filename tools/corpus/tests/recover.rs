@@ -142,6 +142,7 @@ fn crash_after(corpus: &Corpus, plan: &Plan, survive: usize) {
         user: "tester".into(),
         component: "fileroom test".into(),
         certificate: None,
+        operator_verified: false,
     };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         dispose(&run, &mut clock(), &mut |p| {
@@ -164,6 +165,7 @@ fn recovery<'a>(corpus: &'a Corpus, sequence: u32) -> Recovery<'a> {
         component: "fileroom test".into(),
         settings: &corpus.settings,
         certificate: None,
+        operator_verified: false,
     }
 }
 
@@ -290,4 +292,28 @@ fn recovery_refuses_a_batch_that_is_not_unfinished() {
         recover(&recovery(&corpus, 1), &mut clock()),
         Err(Error::Refused(Refusal::AlreadyFinal(1)))
     ));
+}
+
+#[test]
+fn a_root_requiring_a_verified_operator_is_not_recovered_without_one() {
+    let mut corpus = Corpus::generate(40);
+    let plan = corpus.plan();
+    crash_after(&corpus, &plan, 3);
+    let path = corpus.root().join("settings.toml");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.insert_str(0, "operator_identity = \"verified\"\n");
+    std::fs::write(&path, &text).unwrap();
+    corpus.settings = fileroom::settings::Settings::parse(&text).unwrap();
+    let register = Register::open(corpus.root().join("register"));
+    let sequence = register.last().unwrap();
+    let err = recover(&recovery(&corpus, sequence), &mut clock()).unwrap_err();
+    assert!(
+        matches!(err, Error::Refused(Refusal::OperatorIdentity)),
+        "{err:?}"
+    );
+    assert!(!register.final_path(sequence).exists());
+    let mut verified = recovery(&corpus, sequence);
+    verified.operator_verified = true;
+    recover(&verified, &mut clock()).unwrap();
+    assert!(register.final_path(sequence).exists());
 }

@@ -23,6 +23,16 @@ pub struct Settings {
     pub fiscal_year_start_month: u8,
     /// The share roots, by name.
     pub roots: BTreeMap<String, Root>,
+    /// What the organization requires of a writing implementation's
+    /// operator (SPEC §7.1, §9).
+    pub operator_identity: Option<OperatorIdentity>,
+}
+
+/// What `operator_identity` may require (SPEC §7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatorIdentity {
+    /// The operating person has been verified against an identity provider.
+    Verified,
 }
 
 /// One share, as each platform mounts it.
@@ -104,10 +114,30 @@ impl Settings {
                 roots.insert(name.to_owned(), root);
             }
         }
+        let operator_identity = match k.optional_string(RULE, "operator_identity")? {
+            None => None,
+            Some("verified") => Some(OperatorIdentity::Verified),
+            Some(other) => {
+                return Err(Malformed::new(
+                    RULE,
+                    "operator_identity",
+                    format!("{other:?} is not verified, the one value defined"),
+                )
+                .into())
+            }
+        };
         Ok(Self {
             organization: k.string(RULE, "organization")?.to_owned(),
             fiscal_year_start_month,
             roots,
+            operator_identity,
         })
+    }
+
+    /// Whether a writing implementation needs a verified operator here
+    /// (SPEC §9).
+    #[must_use]
+    pub fn requires_verified_operator(&self) -> bool {
+        self.operator_identity == Some(OperatorIdentity::Verified)
     }
 }
