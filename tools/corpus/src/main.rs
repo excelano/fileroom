@@ -739,7 +739,7 @@ impl Gen {
                 snapshot_drifts: false,
             }],
             holds: Vec::new(),
-            scope_matches_unapplied: None,
+            scope_matches_unapplied: Vec::new(),
             reviewed_on: None,
         };
         (record, facts, rel)
@@ -778,6 +778,31 @@ impl Gen {
             .holds
             .push((m.id.clone(), m.kind, add_days(m.placed, 1)));
         facts.holds.push(m.id.clone());
+    }
+
+    /// The active matters whose scope matches the record and which the record
+    /// does not carry, by the generator's own reading of the scopes it wrote.
+    fn scopes_matching(&self, record: &Record) -> Vec<Identifier> {
+        let email = record.custodian.email.as_str();
+        let created = record.created;
+        self.matters
+            .iter()
+            .filter(|m| m.released.is_none())
+            .filter(|m| match m.title.as_str() {
+                "Vendor dispute, Acme Corp." => {
+                    email == "jdoe@example.com" && created >= Date::new(2019, 1, 1).unwrap()
+                }
+                "Regulatory inquiry 2026-07" => email == "mlee@example.com",
+                "Audit extension, expired" => {
+                    email == "asmith@example.com" && created >= Date::new(2018, 1, 1).unwrap()
+                }
+                "Audit extension, running" => email == "tnguyen@example.com",
+                "Defensive hold, no records marked" => email == "defense@example.com",
+                _ => false,
+            })
+            .filter(|m| !record.holds.iter().any(|(id, _, _)| *id == m.id))
+            .map(|m| m.id.clone())
+            .collect()
     }
 
     fn write(&self, rel: &str, bytes: &[u8]) -> Result<(), String> {
@@ -899,7 +924,6 @@ impl Gen {
                 record = r;
                 facts = f;
                 rel = path;
-                facts.scope_matches_unapplied = Some(self.matters[5].id.clone());
             }
             "aggregation_member" => {
                 let which = self.rng.range(1, 2) as usize;
@@ -1083,6 +1107,7 @@ impl Gen {
         }
         let bytes = record.build(&tamper);
         self.write(&rel, &bytes)?;
+        facts.scope_matches_unapplied = self.scopes_matching(&record);
         let truth = forced.unwrap_or_else(|| evaluate(&facts, &self.schedule, 10, self.as_of));
         self.truth.push(TruthRow {
             path: rel,

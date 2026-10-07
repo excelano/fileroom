@@ -10,18 +10,14 @@ use std::path::Path;
 use std::process::Command;
 
 use fileroom::conventions::Date;
-use fileroom::dispose::{evaluate_path, Context};
+use fileroom::dispose::{evaluate_path, Context, Matters, ScopeMatcher, Scopes};
+use fileroom::records::{self, Reading, Table};
 use fileroom::schedule::Store;
 use fileroom::settings::Settings;
+use fileroom::slpc::Container;
 
 /// Cases the crate cannot yet decide, and what each waits on.
-const WAITING: &[(&str, &str)] = &[
-    ("defensive_hold", "SlipQL scope evaluation, slipql #1"),
-    (
-        "component_unlisted",
-        "member listing in slpc, slpc-rust #11",
-    ),
-];
+const WAITING: &[(&str, &str)] = &[];
 
 fn generate(out: &Path, as_of: &str) {
     let status = Command::new(env!("CARGO_BIN_EXE_corpus"))
@@ -56,6 +52,8 @@ fn eligibility_matches_the_ground_truth_at_three_dates() {
             as_of: Date::parse(as_of).unwrap(),
         };
 
+        let scopes = Scopes::of(&Matters::load(&root).unwrap()).unwrap();
+        assert_eq!(scopes.len(), 5);
         let truth = std::fs::read_to_string(dir.path().join("ground-truth.csv")).unwrap();
         let mut wrong = Vec::new();
         let mut ahead = Vec::new();
@@ -64,7 +62,15 @@ fn eligibility_matches_the_ground_truth_at_three_dates() {
             let f: Vec<&str> = line.split(',').collect();
             let (path, case, outcome, reasons, flags, earliest) =
                 (f[1], f[3], f[4], f[5], f[6], f[7]);
-            let got = evaluate_path(&dir.path().join("shares").join(path), &[], context).unwrap();
+            let full = dir.path().join("shares").join(path);
+            let unapplied = Container::open(&full)
+                .ok()
+                .and_then(|c| match records::read(c.flyleaf()) {
+                    Reading::Table(Table::Record(r)) => scopes.unapplied(&r, c.flyleaf()).ok(),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let got = evaluate_path(&full, &unapplied, context).unwrap();
             let (got_outcome, got_reasons, got_flags, got_earliest) = match &got {
                 None => (
                     "unclassified".to_owned(),

@@ -225,7 +225,8 @@ dependencies = [
  "csv",
  "gethostname",
  "sha2",
- "slpc",
+ "slipql",
+ "slpc 0.6.0",
  "tempfile",
  "unicode-normalization",
 ]
@@ -408,10 +409,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "slipql"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e8a6fe17e211c44433e1f542af05d9c876b1eac8f3b073add689c74055fe8d9"
+dependencies = [
+ "slpc 0.5.0",
+ "unicode-width",
+]
+
+[[package]]
 name = "slpc"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df7e40546e8efdd2b6298e9e63fb3b74a1de1eeff6eb0cef0c8cb0cc24334a7a"
+dependencies = [
+ "toml_edit",
+ "zip",
+]
+
+[[package]]
+name = "slpc"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ef829b31ef3c3bc13547fa09ef8d01f2735af2e456a8ebc7e23a64330a8ed37"
 dependencies = [
  "tempfile",
  "toml_edit",
@@ -518,6 +539,12 @@ checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
 dependencies = [
  "tinyvec",
 ]
+
+[[package]]
+name = "unicode-width"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "utf8parse"

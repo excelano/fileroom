@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fileroom::conventions::{Date, Hash, Identifier, Instant};
-use fileroom::dispose::{dispose, Context, Matters, Plan, Planned, Run};
+use fileroom::dispose::{dispose, Context, Matters, Plan, Planned, Run, Scopes};
 use fileroom::location::Mounts;
 use fileroom::records::{self, Reading, Record, Table};
 use fileroom::register::{Outcome, Register};
@@ -112,16 +112,8 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn defensive(
-    matter: Identifier,
-) -> impl Fn(&Record, &DocumentMut) -> Result<Vec<Identifier>, Error> {
-    move |record, _| {
-        Ok(if record.custodian.email == "defense@example.com" {
-            vec![matter.clone()]
-        } else {
-            Vec::new()
-        })
-    }
+fn scopes(corpus: &Corpus) -> Scopes {
+    Scopes::of(&Matters::load(&corpus.root()).unwrap()).unwrap()
 }
 
 fn at(hour: u8) -> Instant {
@@ -149,7 +141,7 @@ fn clock() -> impl FnMut() -> Instant {
 }
 
 fn make_plan(corpus: &Corpus, paths: &[PathBuf]) -> Plan {
-    let matcher = defensive(corpus.defensive_matter());
+    let matcher = scopes(corpus);
     let mounts = Mounts::of(&corpus.settings);
     let id = Identifier::parse("01929e10-2a3b-7c4d-8e5f-6a7b8c9d0e1f").unwrap();
     let (mut plan, _) = Plan::make(
@@ -201,7 +193,7 @@ fn a_plan_holds_the_eligible_records_and_only_those() {
             "{case} {path}"
         );
     }
-    assert!(plan.records.len() > 100);
+    assert!(plan.records.len() > 40, "{}", plan.records.len());
     let text = plan.to_toml();
     assert_eq!(Plan::parse(&text).unwrap(), plan);
     let p = &plan.records[0];
@@ -213,7 +205,7 @@ fn a_plan_holds_the_eligible_records_and_only_those() {
 fn disposing_destroys_the_plan_and_the_register_records_it() {
     let corpus = Corpus::generate(300, 22, false);
     let plan = make_plan(&corpus, &corpus.containers());
-    let matcher = defensive(corpus.defensive_matter());
+    let matcher = scopes(&corpus);
     let summary = run_plan(&corpus, &plan, &matcher).unwrap();
     assert_eq!(summary.sequence, 2, "the corpus already holds batch 1");
     assert_eq!(summary.destroyed(), plan.records.len());
@@ -264,7 +256,7 @@ fn a_record_changed_since_the_plan_is_skipped() {
     std::fs::write(&victim.path, out.into_inner()).unwrap();
     std::fs::remove_file(&plan.records[1].path).unwrap();
 
-    let matcher = defensive(corpus.defensive_matter());
+    let matcher = scopes(&corpus);
     let summary = run_plan(&corpus, &plan, &matcher).unwrap();
     assert_eq!(summary.outcomes[0].outcome, Outcome::Skipped);
     assert_eq!(
@@ -312,7 +304,7 @@ fn a_hold_scope_matched_at_run_time_blocks_destruction() {
 #[test]
 fn nothing_the_specification_protects_is_destroyed_by_a_tampered_plan() {
     let corpus = Corpus::generate(900, 25, false);
-    let matcher = defensive(corpus.defensive_matter());
+    let matcher = scopes(&corpus);
     let mut records = Vec::new();
     let mut cases = Vec::new();
     for row in &corpus.truth {
@@ -387,7 +379,7 @@ fn nothing_the_specification_protects_is_destroyed_by_a_tampered_plan() {
 fn an_unfinished_batch_or_a_missing_approval_refuses_before_anything_is_touched() {
     let corpus = Corpus::generate(150, 26, true);
     let mut plan = make_plan(&corpus, &corpus.containers());
-    let matcher = defensive(corpus.defensive_matter());
+    let matcher = scopes(&corpus);
     let before = corpus.containers().len();
     match run_plan(&corpus, &plan, &matcher) {
         Err(Error::Refused(Refusal::Unfinished(u))) => assert_eq!(u.sequence, 2),

@@ -15,7 +15,7 @@ use fileroom::records::{self, Reading, Table};
 use fileroom::slpc::toml_edit::DocumentMut;
 use fileroom::slpc::Container;
 
-const DEFERRED: &[(&str, &str)] = &[("component-unlisted-member", "member listing in slpc")];
+const DEFERRED: &[(&str, &str)] = &[];
 
 struct Case {
     name: String,

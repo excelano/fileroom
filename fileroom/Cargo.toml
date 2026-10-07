@@ -19,7 +19,7 @@ rust-version.workspace = true
 cli = ["dep:clap"]
 # Eligibility, plans, destruction and recovery: the only code that deletes.
 # Off by default so a reader links nothing that can destroy.
-dispose = ["dep:gethostname"]
+dispose = ["dep:gethostname", "dep:slipql"]
 
 [[bin]]
 name = "fileroom"
@@ -27,12 +27,13 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
-slpc = { version = "0.5", features = ["fs"] }
+slpc = { version = "0.6", features = ["fs"] }
 sha2 = "0.11"
 csv = "1.4"
 unicode-normalization = "0.1"
 clap = { version = "4.6", features = ["derive", "env"], optional = true }
 gethostname = { version = "1.1", optional = true }
+slipql = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile = "3.27"

@@ -38,6 +38,72 @@ where
     }
 }
 
+/// The active matters' scopes, parsed once, evaluated against each record's
+/// `[records]` table (SPEC §4.3). A scope sees that table and nothing else in
+/// the flyleaf, so paths in it are relative to the table and no other
+/// profile's table is reachable, and `@path` is empty.
+pub struct Scopes {
+    scopes: Vec<(Identifier, slipql::ast::Predicate)>,
+}
+
+impl Scopes {
+    /// Parse every active matter's scope.
+    ///
+    /// # Errors
+    ///
+    /// A scope that is not a `SlipQL` condition (`4.1`).
+    pub fn of(matters: &Matters) -> Result<Self, Error> {
+        let scopes = matters
+            .active
+            .iter()
+            .map(|h| {
+                slipql::parse_condition(&h.scope)
+                    .map(|p| (h.id.clone(), p))
+                    .map_err(|e| {
+                        Malformed::new("4.1", format!("holds/{}.slpc scope", h.id), e.to_string())
+                            .into()
+                    })
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(Self { scopes })
+    }
+
+    /// How many scopes are evaluated.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.scopes.len()
+    }
+
+    /// Whether there is no active matter.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.scopes.is_empty()
+    }
+}
+
+impl ScopeMatcher for Scopes {
+    fn unapplied(&self, record: &Record, flyleaf: &DocumentMut) -> Result<Vec<Identifier>, Error> {
+        let mut table = DocumentMut::new();
+        if let Some(t) = flyleaf
+            .get(records::TABLE)
+            .and_then(slpc::toml_edit::Item::as_table_like)
+        {
+            for (key, item) in t.iter() {
+                table.insert(key, item.clone());
+            }
+        }
+        Ok(self
+            .scopes
+            .iter()
+            .filter(|(id, _)| !record.holds.iter().any(|h| &h.matter == id))
+            .filter(|(_, predicate)| {
+                slipql::evaluate(predicate, &table, "").0 == slipql::Truth::True
+            })
+            .map(|(id, _)| id.clone())
+            .collect())
+    }
+}
+
 /// The hold matters in a records root.
 #[derive(Debug, Clone, Default)]
 pub struct Matters {

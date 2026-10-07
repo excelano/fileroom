@@ -19,7 +19,7 @@ pub struct Facts {
     pub created: Date,
     pub series: Vec<SeriesFact>,
     pub holds: Vec<Identifier>,
-    pub scope_matches_unapplied: Option<Identifier>,
+    pub scope_matches_unapplied: Vec<Identifier>,
     pub reviewed_on: Option<Date>,
 }
 
@@ -127,7 +127,7 @@ pub fn evaluate(
         reasons.push(format!("awaiting_event:{}", awaiting.join("|")));
     }
     let mut held: Vec<String> = facts.holds.iter().map(ToString::to_string).collect();
-    if let Some(m) = &facts.scope_matches_unapplied {
+    for m in &facts.scope_matches_unapplied {
         held.push(format!("{m}:unapplied"));
     }
     if !held.is_empty() {

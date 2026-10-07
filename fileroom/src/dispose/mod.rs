@@ -16,4 +16,4 @@ pub use eligibility::{
 };
 pub use plan::{Plan, Planned};
 pub use recover::{recover, Recovered, Recovery};
-pub use run::{dispose, Matters, Progress, RecordOutcome, Run, ScopeMatcher, Summary};
+pub use run::{dispose, Matters, Progress, RecordOutcome, Run, ScopeMatcher, Scopes, Summary};

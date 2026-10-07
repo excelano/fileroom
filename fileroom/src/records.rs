@@ -642,7 +642,22 @@ pub fn components_present<R: Read + Seek>(
             Err(e) => return Err(e.into()),
         }
     }
-    Ok(Ok(()))
+    Ok(unlisted(record, c))
+}
+
+/// Every member under `records/components/` is one the table lists (SPEC §2.7).
+fn unlisted<R: Read + Seek>(record: &Record, c: &Container<R>) -> Result<(), Malformed> {
+    for name in c.member_names() {
+        let under = name.starts_with(COMPONENTS_PREFIX) && !name.ends_with('/');
+        if under && !record.components.iter().any(|comp| comp.member == name) {
+            return Err(Malformed::new(
+                "2.7",
+                name,
+                "under records/components/ and listed by no entry",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn check_members<R: Read + Seek>(
@@ -656,6 +671,9 @@ fn check_members<R: Read + Seek>(
             "records.fixity.content_sha256",
             format!("the content file hashes to {content}"),
         )));
+    }
+    if let Err(m) = unlisted(record, c) {
+        return Ok(Err(m));
     }
     for component in &record.components {
         let hash = match c.member(&component.member) {

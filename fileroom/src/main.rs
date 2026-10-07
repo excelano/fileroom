@@ -21,7 +21,7 @@ Exit codes:
   2  bad command line
   3  no verdict: an undetermined container, or one declaring a version this build does not implement
   4  partial: a disposal run skipped or failed some of its records
-  5  refused: an unfinished batch, a plan nobody approved, or hold scopes this build cannot evaluate
+  5  refused: an unfinished batch, or a plan nobody approved
 
 The records root is the directory holding settings.toml; --root names it, and
 FILEROOM_ROOT is its default.";
@@ -808,7 +808,7 @@ mod acting {
     use std::path::{Path, PathBuf};
 
     use fileroom::conventions::{Date, Identifier};
-    use fileroom::dispose::{self, Context, Matters, Plan, Run};
+    use fileroom::dispose::{self, Context, Matters, Plan, Run, Scopes};
     use fileroom::location::Mounts;
     use fileroom::schedule::{Schedule, Store, VersionId};
     use fileroom::settings::Settings;
@@ -848,29 +848,9 @@ mod acting {
         }
     }
 
-    /// Until `SlipQL` evaluates a scope against one flyleaf, a root with active
-    /// matters cannot have their scopes checked, and the acting verbs refuse.
-    fn matcher(
-        root: &Path,
-    ) -> Result<
-        impl Fn(
-            &fileroom::records::Record,
-            &fileroom::slpc::toml_edit::DocumentMut,
-        ) -> Result<Vec<Identifier>, Error>,
-        Outcome,
-    > {
+    fn matcher(root: &Path) -> Result<Scopes, Outcome> {
         let matters = Matters::load(root).map_err(|e| failed(&e))?;
-        if !matters.active.is_empty() {
-            return Err(Outcome::Refused(format!(
-                "{} active hold matters whose scopes this build cannot evaluate",
-                matters.active.len()
-            )));
-        }
-        Ok(
-            |_: &fileroom::records::Record, _: &fileroom::slpc::toml_edit::DocumentMut| {
-                Ok(Vec::new())
-            },
-        )
+        Scopes::of(&matters).map_err(|e| failed(&e))
     }
 
     pub fn evaluate(root: &Path, as_of: Option<&str>, paths: &[PathBuf]) -> Outcome {
@@ -895,7 +875,7 @@ mod acting {
                 .ok()
                 .and_then(|c| match fileroom::records::read(c.flyleaf()) {
                     fileroom::records::Reading::Table(fileroom::records::Table::Record(r)) => {
-                        matcher(&r, c.flyleaf()).ok()
+                        fileroom::dispose::ScopeMatcher::unapplied(&matcher, &r, c.flyleaf()).ok()
                     }
                     _ => None,
                 })
