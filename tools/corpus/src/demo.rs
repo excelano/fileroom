@@ -487,19 +487,13 @@ struct Demo {
 }
 
 /// Write the demonstration root in `language` under `out`, which is created
-/// and must be empty: `root/` and `shares/`. `windows_shares` is the path
-/// `settings.toml` gives the share root on Windows where it is not where it
-/// is written, for a root that is zipped and unpacked on another machine.
+/// and must be empty: `root/` and `shares/`. The share root is mounted where
+/// it was written, so a root meant for another machine is generated there.
 ///
 /// # Errors
 ///
 /// A sentence saying what could not be done.
-pub fn run(
-    out: &Path,
-    language: Language,
-    seed: u64,
-    windows_shares: Option<&str>,
-) -> Result<(), String> {
+pub fn run(out: &Path, language: Language, seed: u64) -> Result<(), String> {
     let company = match language {
         Language::En => &EN,
         Language::De => &DE,
@@ -512,11 +506,10 @@ pub fn run(
     }
     std::fs::create_dir_all(&shares).map_err(err)?;
     let here = shares.to_string_lossy().into_owned();
-    let windows = windows_shares.unwrap_or(&here);
     std::fs::write(
         root.join("settings.toml"),
         format!(
-            "organization = \"{}\"\nfiscal_year_start_month = {}\n\n[roots.{}]\nwindows = '{windows}'\nmacos = '{here}'\nlinux = '{here}'\n",
+            "organization = \"{}\"\nfiscal_year_start_month = {}\n\n[roots.{}]\nwindows = '{here}'\nmacos = '{here}'\nlinux = '{here}'\n",
             company.organization, company.fiscal_year_start_month, company.share
         ),
     )

@@ -42,12 +42,7 @@ fn every_demonstration_record_reads_in_both_languages() {
         let dir = tempfile::tempdir().unwrap();
         let status = Command::new(env!("CARGO_BIN_EXE_corpus"))
             .arg(dir.path())
-            .args([
-                "--demo",
-                language,
-                "--windows-shares",
-                r"C:\FileroomSample\shares",
-            ])
+            .args(["--demo", language])
             .status()
             .unwrap();
         assert!(status.success());
@@ -67,7 +62,5 @@ fn every_demonstration_record_reads_in_both_languages() {
         let id = store.current().unwrap().unwrap();
         let (schedule, _) = store.load(&id).unwrap();
         assert_eq!(schedule.rows.len(), 13);
-        let settings = std::fs::read_to_string(root.join("settings.toml")).unwrap();
-        assert!(settings.contains(r"windows = 'C:\FileroomSample\shares'"));
     }
 }

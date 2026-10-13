@@ -51,10 +51,6 @@ pub struct Options {
     /// company's records with nothing broken, and no ground truth
     #[arg(long, value_enum)]
     pub demo: Option<Language>,
-    /// With --demo, the Windows path settings.toml gives the share root, for
-    /// a root that is unpacked somewhere other than where it was written
-    #[arg(long, requires = "demo")]
-    pub windows_shares: Option<String>,
 }
 
 /// Every case and its default weight.
@@ -386,12 +382,7 @@ pub fn run(args: &Options) -> Result<(), String> {
         return Err(format!("{} is not empty", args.out.display()));
     }
     if let Some(language) = args.demo {
-        return crate::demo::run(
-            &args.out,
-            language,
-            args.seed,
-            args.windows_shares.as_deref(),
-        );
+        return crate::demo::run(&args.out, language, args.seed);
     }
     let as_of = Date::parse(&args.as_of)?;
     let out = std::path::absolute(&args.out).map_err(|e| e.to_string())?;
