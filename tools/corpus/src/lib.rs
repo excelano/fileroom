@@ -8,6 +8,7 @@
 
 pub mod build;
 pub mod dates;
+pub mod demo;
 mod generate;
 pub mod rng;
 pub mod truth;

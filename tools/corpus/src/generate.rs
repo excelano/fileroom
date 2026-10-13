@@ -8,6 +8,7 @@ use crate::build::{
     Tamper,
 };
 use crate::dates::{add_days, instant, unix_ms};
+use crate::demo::Language;
 use crate::rng::Rng;
 use crate::truth::{evaluate, Facts, SeriesFact, Truth};
 use clap::Parser;
@@ -46,6 +47,14 @@ pub struct Options {
     /// NARA's schedule CSV
     #[arg(long, default_value = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spec/records/examples/schedule/grs-transmittal36.csv"))]
     pub nara: PathBuf,
+    /// Write the demonstration root in this language instead: an invented
+    /// company's records with nothing broken, and no ground truth
+    #[arg(long, value_enum)]
+    pub demo: Option<Language>,
+    /// With --demo, the Windows path settings.toml gives the share root, for
+    /// a root that is unpacked somewhere other than where it was written
+    #[arg(long, requires = "demo")]
+    pub windows_shares: Option<String>,
 }
 
 /// Every case and its default weight.
@@ -368,7 +377,6 @@ pub fn run(args: &Options) -> Result<(), String> {
             .ok_or_else(|| format!("--mix {m}: no case {name}"))?;
         entry.1 = weight;
     }
-    let as_of = Date::parse(&args.as_of)?;
     if args.out.exists()
         && std::fs::read_dir(&args.out)
             .map_err(|e| e.to_string())?
@@ -377,6 +385,15 @@ pub fn run(args: &Options) -> Result<(), String> {
     {
         return Err(format!("{} is not empty", args.out.display()));
     }
+    if let Some(language) = args.demo {
+        return crate::demo::run(
+            &args.out,
+            language,
+            args.seed,
+            args.windows_shares.as_deref(),
+        );
+    }
+    let as_of = Date::parse(&args.as_of)?;
     let out = std::path::absolute(&args.out).map_err(|e| e.to_string())?;
     let root = out.join("root");
     let shares = out.join("shares");
