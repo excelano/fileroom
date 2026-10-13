@@ -16,7 +16,8 @@ use fileroom::conventions::{Agent, Date, Identifier, Instant};
 use fileroom::location::Location;
 use fileroom::schedule::Store;
 
-const TOOL: &str = "corpus 0.1.0";
+/// The program the history names, as the invented company would have seen it.
+const TOOL: &str = "slipcase-fileroom 0.1.0";
 
 /// The language a demonstration root is written in.
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
