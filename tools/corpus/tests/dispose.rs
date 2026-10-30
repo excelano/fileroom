@@ -555,3 +555,43 @@ fn a_run_outside_the_plans_date_or_schedule_is_refused_before_anything_is_touche
         1
     );
 }
+
+#[test]
+fn a_container_in_holds_that_is_not_a_matter_stops_disposition() {
+    let corpus = Corpus::generate(120, 34, false);
+    let holds = corpus.root().join("holds");
+    let active = Matters::load(&corpus.root()).unwrap().active.len();
+    std::fs::write(holds.join("notes.txt"), "not a container").unwrap();
+    assert_eq!(Matters::load(&corpus.root()).unwrap().active.len(), active);
+
+    let plan = make_plan(&corpus, &corpus.containers());
+    std::fs::copy(&plan.records[0].path, holds.join("misfiled.slpc")).unwrap();
+    match Matters::load(&corpus.root()) {
+        Err(Error::Malformed(m)) => {
+            assert_eq!(m.rule, "4");
+            assert!(m.key.ends_with("misfiled.slpc"), "{}", m.key);
+            assert!(m.problem.starts_with("not a hold matter"), "{}", m.problem);
+        }
+        r => panic!("{r:?}"),
+    }
+
+    let empty = tempfile::tempdir().unwrap();
+    let none = Matters::load(empty.path()).unwrap();
+    assert!(none.active.is_empty() && none.released.is_empty());
+}
+
+#[test]
+fn a_matter_whose_scope_does_not_parse_is_refused() {
+    let corpus = Corpus::generate(120, 35, false);
+    let mut matters = Matters::load(&corpus.root()).unwrap();
+    let hold = &mut matters.active[0];
+    hold.scope = "records.series ==".into();
+    let id = hold.id.clone();
+    match Scopes::of(&matters) {
+        Err(Error::Malformed(m)) => {
+            assert_eq!(m.rule, "4.1");
+            assert_eq!(m.key, format!("holds/{id}.slpc scope"));
+        }
+        r => panic!("{:?}", r.map(|s| s.len())),
+    }
+}

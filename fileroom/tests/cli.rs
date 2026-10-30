@@ -366,3 +366,62 @@ fn a_disposal_run_whose_reader_has_gone_still_finishes_its_batch() {
     let n = plan.records.len();
     assert!(out.contains(&format!("{n} of {n} destroyed")), "{out}");
 }
+
+#[cfg(feature = "dispose")]
+#[test]
+fn a_misfiled_container_in_holds_stops_plan_and_dispose() {
+    let dir = tempfile::tempdir().unwrap();
+    corpus::run(&corpus::Options {
+        out: dir.path().join("corpus"),
+        seed: 41,
+        count: 120,
+        as_of: "2026-10-01".into(),
+        mix: Vec::new(),
+        unfinished_intent: false,
+        nara: examples().join("schedule/grs-transmittal36.csv"),
+        demo: None,
+    })
+    .unwrap();
+    let cwd = dir.path().join("corpus");
+    let root = cwd.join("root");
+    let root = root.to_str().unwrap();
+    let plan = [
+        "plan",
+        "--root",
+        root,
+        "--as-of",
+        "2026-10-01",
+        "-r",
+        "--out",
+        "plan.toml",
+        "shares",
+    ];
+    let (code, _, err) = fileroom(&plan, &cwd);
+    assert_eq!(code, 0, "{err}");
+    let planned = fileroom::dispose::Plan::load(&cwd.join("plan.toml")).unwrap();
+    std::fs::copy(
+        &planned.records[0].path,
+        cwd.join("root/holds/misfiled.slpc"),
+    )
+    .unwrap();
+
+    let (code, _, err) = fileroom(&[&plan[..7], &["again.toml", "shares"]].concat(), &cwd);
+    assert_eq!(code, 1);
+    assert!(err.contains("not a hold matter"), "{err}");
+    assert!(!cwd.join("again.toml").exists());
+    let (code, _, err) = fileroom(
+        &[
+            "dispose",
+            "--root",
+            root,
+            "--approved-by",
+            "rm@example.com",
+            "--yes",
+            "plan.toml",
+        ],
+        &cwd,
+    );
+    assert_eq!(code, 1);
+    assert!(err.contains("not a hold matter"), "{err}");
+    assert!(planned.records.iter().all(|p| p.path.exists()));
+}
