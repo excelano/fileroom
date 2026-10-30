@@ -595,3 +595,102 @@ fn a_matter_whose_scope_does_not_parse_is_refused() {
         r => panic!("{:?}", r.map(|s| s.len())),
     }
 }
+
+struct Unavailable;
+
+impl fileroom::dispose::ScopeMatcher for Unavailable {
+    fn unapplied(&self, _: &Record, _: &DocumentMut) -> Result<Vec<Identifier>, Error> {
+        Err(Error::Io(std::io::Error::other("scope service down")))
+    }
+}
+
+/// Flip a byte in the middle of a member's compressed data, leaving the
+/// flyleaf and every other member as they were.
+fn corrupt_member(path: &Path, member: &str) {
+    let mut bytes = std::fs::read(path).unwrap();
+    let u16_at = |b: &[u8], i: usize| usize::from(u16::from_le_bytes([b[i], b[i + 1]]));
+    let header = (0..bytes.len() - 30)
+        .find(|&i| {
+            bytes[i..i + 4] == *b"PK\x03\x04"
+                && bytes[i + 30..].starts_with(member.as_bytes())
+                && u16_at(&bytes, i + 26) == member.len()
+        })
+        .unwrap();
+    let size = u32::from_le_bytes(bytes[header + 18..header + 22].try_into().unwrap()) as usize;
+    let data = header + 30 + member.len() + u16_at(&bytes, header + 28);
+    bytes[data + size / 2] ^= 0xFF;
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn a_record_the_run_cannot_scope_or_read_is_skipped_and_the_rest_destroyed() {
+    let corpus = Corpus::generate(200, 36, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    let summary = run_plan(&corpus, &plan, &Unavailable).unwrap();
+    assert_eq!(summary.skipped(), plan.records.len());
+    assert!(summary
+        .outcomes
+        .iter()
+        .all(|o| o.reason.as_deref() == Some("scope_evaluation_failed:scope service down")));
+    assert!(plan.records.iter().all(|p| p.path.exists()));
+
+    let victim = &plan.records[0];
+    corrupt_member(&victim.path, "records/events.toml");
+    let summary = run_plan(&corpus, &plan, &scopes(&corpus)).unwrap();
+    assert_eq!(summary.outcomes[0].outcome, Outcome::Skipped);
+    let reason = summary.outcomes[0].reason.as_deref().unwrap();
+    assert!(reason.starts_with("unreadable:"), "{reason}");
+    assert!(victim.path.exists());
+    assert_eq!(summary.destroyed(), plan.records.len() - 1);
+
+    let v = Register::open(corpus.root().join("register"))
+        .verify()
+        .unwrap();
+    assert!(v.intact(), "{:?}", v.broken);
+    assert_eq!(v.finals[1].destroyed, 0);
+    assert_eq!(v.finals[2].destroyed as usize, plan.records.len() - 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_record_that_cannot_be_deleted_is_failed_and_the_batch_still_finishes() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let corpus = Corpus::generate(200, 37, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    let locked = plan.records[0].path.parent().unwrap().to_owned();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let summary = run_plan(&corpus, &plan, &scopes(&corpus));
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let summary = summary.unwrap();
+
+    let inside = plan
+        .records
+        .iter()
+        .filter(|p| p.path.parent() == Some(&locked))
+        .count();
+    assert_eq!(summary.failed(), inside);
+    assert_eq!(summary.destroyed(), plan.records.len() - inside);
+    for (planned, outcome) in plan.records.iter().zip(&summary.outcomes) {
+        if planned.path.parent() == Some(&locked) {
+            assert_eq!(outcome.outcome, Outcome::Failed);
+            assert_eq!(outcome.reason.as_deref(), Some("delete_failed"));
+            assert!(outcome.error.is_some());
+            assert!(planned.path.exists());
+        } else {
+            assert_eq!(outcome.outcome, Outcome::Destroyed);
+        }
+    }
+    let register = Register::open(corpus.root().join("register"));
+    let (_, entries) = register.journal(2).unwrap().unwrap();
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|e| e.outcome == Outcome::Failed)
+            .count(),
+        inside
+    );
+    let v = register.verify().unwrap();
+    assert!(v.intact(), "{:?}", v.broken);
+    assert_eq!(v.finals[1].destroyed as usize, plan.records.len() - inside);
+}
