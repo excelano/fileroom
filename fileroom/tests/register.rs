@@ -12,7 +12,8 @@ use fileroom::conventions::{Agent, Date, Hash, Identifier, Instant};
 use fileroom::register::{
     Completion, JournalEntry, Manifest, Outcome, Plan, Register, Row, MANIFEST_MEMBER,
 };
-use fileroom::slpc::Repack;
+use fileroom::slpc::toml_edit::{DocumentMut, Item, Value};
+use fileroom::slpc::{Container, Repack};
 use fileroom::{Error, Refusal};
 
 fn at(hour: u8, minute: u8) -> Instant {
@@ -316,4 +317,96 @@ fn an_empty_journal_is_no_journal_and_takes_the_first_outcome() {
     let (log, entries) = r.journal(1).unwrap().unwrap();
     assert_eq!(entries.len(), 1);
     assert!(log.bytes().starts_with(b"[[outcome]]\n"));
+}
+
+fn decided(n: u8) -> Row {
+    let mut r = row(n);
+    r.outcome = Some(Outcome::Destroyed);
+    r
+}
+
+#[test]
+fn a_final_that_does_not_complete_its_intent_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = Register::open(dir.path());
+    r.claim(&plan()).unwrap();
+    let out_of_order = "the final manifest does not list the intent's records in order";
+    for (rows, problem) in [
+        (vec![decided(2), decided(1)], out_of_order.to_owned()),
+        (vec![decided(1)], out_of_order.to_owned()),
+        (
+            vec![decided(1), row(2)],
+            format!("{} has no outcome", row(2).id),
+        ),
+    ] {
+        match r.finalize(1, &completion(rows, None)) {
+            Err(Error::Malformed(m)) => {
+                assert_eq!(m.rule, "6.6");
+                assert_eq!(m.problem, problem);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(!r.final_path(1).exists());
+    r.finalize(1, &completion(vec![decided(1), decided(2)], None))
+        .unwrap();
+}
+
+fn edit_flyleaf(path: &Path, edit: impl FnOnce(&mut DocumentMut)) {
+    let source = std::fs::read(path).unwrap();
+    let mut doc = Container::read(Cursor::new(&source))
+        .unwrap()
+        .flyleaf()
+        .clone();
+    edit(&mut doc);
+    let mut out = Cursor::new(Vec::new());
+    Repack::new(Cursor::new(source))
+        .flyleaf(&doc)
+        .write(&mut out)
+        .unwrap();
+    std::fs::write(path, out.into_inner()).unwrap();
+}
+
+#[test]
+fn a_final_whose_counts_disagree_with_its_manifest_breaks_the_chain() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = Register::open(dir.path());
+    r.claim(&plan()).unwrap();
+    let mut rows = vec![decided(1), row(2)];
+    rows[1].outcome = Some(Outcome::Skipped);
+    rows[1].reason = "changed_since_plan".into();
+    r.finalize(1, &completion(rows, None)).unwrap();
+    assert!(r.verify().unwrap().intact());
+    edit_flyleaf(&r.final_path(1), |doc| {
+        doc["records"]["disposition"]["records_destroyed"] = Item::Value(Value::from(2));
+    });
+    assert_eq!(broken_at(dir.path()), "000001: manifest");
+}
+
+#[test]
+fn recovered_and_recovered_by_come_together_or_not_at_all() {
+    for key in ["recovered", "recovered_by"] {
+        let dir = tempfile::tempdir().unwrap();
+        let r = Register::open(dir.path());
+        r.claim(&plan()).unwrap();
+        let mut rows = vec![row(1), row(2)];
+        rows[0].outcome = Some(Outcome::Unknown);
+        rows[1].outcome = Some(Outcome::Skipped);
+        rows[1].reason = "not_attempted".into();
+        let by = Agent {
+            email: "rm@example.com".into(),
+            id: "rm".into(),
+        };
+        r.finalize(1, &completion(rows, Some((at(15, 0), by))))
+            .unwrap();
+        edit_flyleaf(&r.final_path(1), |doc| {
+            doc["records"]["disposition"]
+                .as_table_like_mut()
+                .unwrap()
+                .remove(key)
+                .unwrap();
+        });
+        let m = r.verify().unwrap().broken.expect(key);
+        assert_eq!(m.rule, "6.7", "{key}: {m}");
+    }
 }
