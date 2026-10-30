@@ -14,6 +14,15 @@ use fileroom::schedule::{RowKind, Schedule, Store};
 use fileroom::slpc::Container;
 use fileroom::Error;
 
+/// `println!` that carries on when stdout is gone, so a disposal run whose
+/// reader went away still finishes its batch.
+macro_rules! say {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($arg)*);
+    }};
+}
+
 const EXIT_CODES: &str = "\
 Exit codes:
   0  success, or every container checked is conformant or unclassified
@@ -22,6 +31,9 @@ Exit codes:
   3  no verdict: an undetermined container, or one declaring a version this build does not implement
   4  partial: a disposal run skipped or failed some of its records
   5  refused: an unfinished batch, or a plan nobody approved
+
+Output that cannot be written, as when a pipe closes early, does not stop a
+command or change its exit code.
 
 The records root is the directory holding settings.toml; --root names it, and
 FILEROOM_ROOT is its default.";
@@ -253,7 +265,7 @@ fn show(path: &Path) -> Outcome {
     };
     match records::read(c.flyleaf()) {
         Reading::Absent => {
-            println!(
+            say!(
                 "{}: unclassified (no Records Profile table)",
                 path.display()
             );
@@ -421,7 +433,7 @@ fn print_disposalbatch(b: &fileroom::register::Batch) {
 }
 
 fn line<V: std::fmt::Display + ?Sized>(key: &str, value: &V) {
-    println!("{key:<16}{value}");
+    say!("{key:<16}{value}");
 }
 
 fn log(path: &Path) -> Outcome {
@@ -451,7 +463,7 @@ fn log(path: &Path) -> Outcome {
             for e in &entries {
                 print_event(e);
             }
-            println!(
+            say!(
                 "intact: {} entries, head {}",
                 entries.len(),
                 table
@@ -478,9 +490,13 @@ fn print_event(e: &Event) {
             (Some(root), Some(path)) => format!("  at {root}:{path}"),
             _ => format!("  at {}", l.raw),
         });
-    println!(
+    say!(
         "{:>4}  {}  {:<20}{}  {}{detail}{location}",
-        e.seq, e.at, e.r#type, e.actor.email, e.tool
+        e.seq,
+        e.at,
+        e.r#type,
+        e.actor.email,
+        e.tool
     );
 }
 
@@ -516,7 +532,7 @@ fn check(paths: &[PathBuf]) -> Outcome {
                 }
             },
         };
-        println!("{}: {verdict}", path.display());
+        say!("{}: {verdict}", path.display());
     }
     if non_conformant > 0 {
         Outcome::BadInput(format!("{non_conformant} not conformant"))
@@ -538,14 +554,16 @@ fn schedule(root: &Path, series: Option<&str>) -> Outcome {
         Ok(x) => x,
         Err(e) => return failed(&e),
     };
-    println!(
+    say!(
         "version {id}, imported {} by {} from {}",
-        about.imported, about.imported_by.email, about.source
+        about.imported,
+        about.imported_by.email,
+        about.source
     );
     match series {
         None => {
             for row in &schedule.rows {
-                println!("{}", summary(row, &schedule));
+                say!("{}", summary(row, &schedule));
             }
             Outcome::Ok
         }
@@ -555,7 +573,7 @@ fn schedule(root: &Path, series: Option<&str>) -> Outcome {
                 return Outcome::BadInput(format!("no series {code}"));
             }
             for row in rows {
-                println!("{}", summary(row, &schedule));
+                say!("{}", summary(row, &schedule));
                 line("title", &row.title);
                 if !row.classification.is_empty() {
                     line("classification", &row.classification);
@@ -616,7 +634,7 @@ fn register(root: &Path) -> Outcome {
         Err(e) => return failed(&e),
     };
     if last == 0 {
-        println!("empty register");
+        say!("empty register");
         return Outcome::Ok;
     }
     let mut trouble = None;
@@ -636,7 +654,7 @@ fn register(root: &Path) -> Outcome {
             match batch {
                 Ok(Some(b)) => {
                     let d = b.disposition;
-                    println!(
+                    say!(
                         "{n:06}  final       {}  {} of {} destroyed{}",
                         d.completed.map_or(String::new(), |c| c.to_string()),
                         d.records_destroyed.unwrap_or(0),
@@ -649,21 +667,21 @@ fn register(root: &Path) -> Outcome {
                     );
                 }
                 Ok(None) => {
-                    println!("{n:06}  unreadable  not a final batch");
+                    say!("{n:06}  unreadable  not a final batch");
                     trouble = Some(format!("{} is not a final batch", path.display()));
                 }
                 Err(e) => {
-                    println!("{n:06}  unreadable  {e}");
+                    say!("{n:06}  unreadable  {e}");
                     trouble = Some(e.to_string());
                 }
             }
         } else if r.intent_path(n).exists() {
             match r.unfinished(n) {
-                Ok(u) => println!("{n:06}  unfinished  {u}"),
+                Ok(u) => say!("{n:06}  unfinished  {u}"),
                 Err(e) => return failed(&e),
             }
         } else {
-            println!("{n:06}  missing");
+            say!("{n:06}  missing");
             trouble = Some(format!("batch {n:06} is missing"));
         }
     }
@@ -676,7 +694,7 @@ fn verify(root: &Path) -> Outcome {
         Err(e) => failed(&e),
         Ok(v) => {
             for f in &v.finals {
-                println!(
+                say!(
                     "{:06}: final, {} of {} destroyed{}",
                     f.sequence,
                     f.destroyed,
@@ -685,11 +703,11 @@ fn verify(root: &Path) -> Outcome {
                 );
             }
             if let Some(u) = &v.unfinished {
-                println!("{u}");
+                say!("{u}");
             }
             match v.broken {
                 None => {
-                    println!("chain intact");
+                    say!("chain intact");
                     Outcome::Ok
                 }
                 Some(m) => Outcome::BadInput(format!("broken at {m}")),
@@ -722,16 +740,16 @@ fn fixity(root: &Path, actor: String, actor_id: Option<String>, paths: &[PathBuf
     for c in &report.checked {
         match &c.finding {
             fileroom::fixity::Finding::Unclassified => {
-                println!("{}: unclassified", c.path.display());
+                say!("{}: unclassified", c.path.display());
             }
             fileroom::fixity::Finding::Unreadable(why) => {
-                println!("{}: unreadable: {why}", c.path.display());
+                say!("{}: unreadable: {why}", c.path.display());
             }
             fileroom::fixity::Finding::Record {
                 failures, logged, ..
             } => {
                 for f in failures {
-                    println!(
+                    say!(
                         "{}: {} hashes to {}, not {}",
                         c.path.display(),
                         f.member,
@@ -742,26 +760,26 @@ fn fixity(root: &Path, actor: String, actor_id: Option<String>, paths: &[PathBuf
                     );
                 }
                 if c.moved() {
-                    println!(
+                    say!(
                         "{}: moved from {}",
                         c.path.display(),
                         logged.path.as_deref().unwrap_or(&logged.raw)
                     );
                 } else if c.not_comparable() {
-                    println!(
+                    say!(
                         "{}: location not comparable (no share root)",
                         c.path.display()
                     );
                 } else if failures.is_empty() {
-                    println!("{}: ok", c.path.display());
+                    say!("{}: ok", c.path.display());
                 }
             }
         }
     }
     if report.events_withheld {
-        println!("no event appended: the root requires a verified operator (settings.toml: operator_identity = \"verified\") and this command has none");
+        say!("no event appended: the root requires a verified operator (settings.toml: operator_identity = \"verified\") and this command has none");
     }
-    println!(
+    say!(
         "{} checked: {} failed, {} moved, {} unreadable, {} not comparable; report {}",
         report.checked.len(),
         report.failed(),
@@ -872,7 +890,7 @@ mod acting {
             settings: &loaded.settings,
             as_of,
         };
-        println!("as of {as_of}, schedule {}", loaded.version);
+        say!("as of {as_of}, schedule {}", loaded.version);
         let mut failures = 0;
         for path in paths {
             let unapplied = fileroom::slpc::Container::open(path)
@@ -887,22 +905,22 @@ mod acting {
             match dispose::evaluate_path(path, &unapplied, context) {
                 Err(e) => {
                     failures += 1;
-                    println!("{}: {e}", path.display());
+                    say!("{}: {e}", path.display());
                 }
-                Ok(None) => println!("{}: unclassified", path.display()),
+                Ok(None) => say!("{}: unclassified", path.display()),
                 Ok(Some(e)) => {
                     let earliest = e
                         .earliest
                         .map_or(String::new(), |d| format!("  earliest {d}"));
-                    println!("{}: {}{earliest}", path.display(), e.outcome);
+                    say!("{}: {}{earliest}", path.display(), e.outcome);
                     for r in &e.reasons {
-                        println!(
+                        say!(
                             "    {}",
                             r.detail().map_or(r.to_string(), |d| format!("{r}: {d}"))
                         );
                     }
                     for f in &e.flags {
-                        println!("    flag {f}");
+                        say!("    flag {f}");
                     }
                 }
             }
@@ -956,9 +974,9 @@ mod acting {
                     let reasons: Vec<String> = e.reasons.iter().map(ToString::to_string).collect();
                     format!("{} {}", e.outcome, reasons.join(" "))
                 });
-            println!("left out  {}: {why}", c.path.display());
+            say!("left out  {}: {why}", c.path.display());
         }
-        println!(
+        say!(
             "{} of {} records planned as of {as_of} against {}; written to {}",
             plan.records.len(),
             considered.len(),
@@ -1001,9 +1019,10 @@ mod acting {
         );
     }
 
-    fn confirmed(count: usize) -> bool {
-        print!("Destroy these {count} records? Type yes to continue: ");
-        std::io::stdout().flush().ok();
+    fn confirmed(prompt: &str) -> bool {
+        let mut stdout = std::io::stdout();
+        let _ = write!(stdout, "{prompt} Type yes to continue: ");
+        let _ = stdout.flush();
         let mut answer = String::new();
         std::io::stdin().read_line(&mut answer).ok();
         answer.trim() == "yes"
@@ -1060,7 +1079,7 @@ mod acting {
         };
         let certificate = certificate.as_deref();
         describe(&plan);
-        if !yes && !confirmed(plan.records.len()) {
+        if !yes && !confirmed(&format!("Destroy these {} records?", plan.records.len())) {
             return Outcome::Refused("not confirmed".into());
         }
         let context = Context {
@@ -1083,7 +1102,7 @@ mod acting {
         };
         let summary = match dispose::dispose(&run, &mut fileroom::dates::utc_now, &mut |p| {
             let o = p.outcome;
-            println!(
+            say!(
                 "{:>6}/{}  {}  {}{}",
                 p.index,
                 p.total,
@@ -1101,7 +1120,7 @@ mod acting {
             Err(Error::Refused(r)) => return Outcome::Refused(r.to_string()),
             Err(e) => return failed(&e),
         };
-        println!(
+        say!(
             "batch {:06} final: {} destroyed, {} skipped, {} failed",
             summary.sequence,
             summary.destroyed(),
@@ -1144,13 +1163,9 @@ mod acting {
             Err(o) => return o,
         };
         let certificate = certificate.as_deref();
-        println!("{unfinished}");
-        println!("Recovery finishes this batch from its journal and from what is present now. It destroys nothing.");
-        print!("Confirm that this batch's run is no longer executing on any machine. Type yes to continue: ");
-        std::io::stdout().flush().ok();
-        let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer).ok();
-        if answer.trim() != "yes" {
+        say!("{unfinished}");
+        say!("Recovery finishes this batch from its journal and from what is present now. It destroys nothing.");
+        if !confirmed("Confirm that this batch's run is no longer executing on any machine.") {
             return Outcome::Refused("not confirmed".into());
         }
         let recovery = dispose::Recovery {
@@ -1167,7 +1182,7 @@ mod acting {
         };
         match dispose::recover(&recovery, &mut fileroom::dates::utc_now) {
             Ok(r) => {
-                println!(
+                say!(
                     "batch {:06} final by recovery: {} outcomes from the journal, {} present and not attempted, {} unknown",
                     r.sequence, r.journaled, r.present, r.unknown
                 );

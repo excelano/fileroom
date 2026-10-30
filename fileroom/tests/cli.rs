@@ -302,3 +302,67 @@ fn evaluate_plan_dispose_and_recover_act_on_a_records_root() {
     assert_eq!(code, 0, "{err}");
     assert!(out.ends_with("chain intact\n"));
 }
+
+#[cfg(feature = "dispose")]
+#[test]
+fn a_disposal_run_whose_reader_has_gone_still_finishes_its_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    corpus::run(&corpus::Options {
+        out: dir.path().join("corpus"),
+        seed: 22,
+        count: 300,
+        as_of: "2026-10-01".into(),
+        mix: Vec::new(),
+        unfinished_intent: false,
+        nara: examples().join("schedule/grs-transmittal36.csv"),
+        demo: None,
+    })
+    .unwrap();
+    let cwd = dir.path().join("corpus");
+    let root = cwd.join("root");
+    let root = root.to_str().unwrap();
+    let (code, _, err) = fileroom(
+        &[
+            "plan",
+            "--root",
+            root,
+            "--as-of",
+            "2026-10-01",
+            "-r",
+            "--out",
+            "plan.toml",
+            "shares",
+        ],
+        &cwd,
+    );
+    assert_eq!(code, 0, "{err}");
+    let plan = fileroom::dispose::Plan::load(&cwd.join("plan.toml")).unwrap();
+
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let out = Command::new(env!("CARGO_BIN_EXE_fileroom"))
+        .args([
+            "dispose",
+            "--root",
+            root,
+            "--approved-by",
+            "rm@example.com",
+            "--yes",
+            "plan.toml",
+        ])
+        .current_dir(&cwd)
+        .stdout(writer)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(plan.records.iter().all(|p| !p.path.exists()));
+    let (code, out, _) = fileroom(&["register", "--root", root], &cwd);
+    assert_eq!(code, 0);
+    let n = plan.records.len();
+    assert!(out.contains(&format!("{n} of {n} destroyed")), "{out}");
+}
