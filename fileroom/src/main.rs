@@ -938,8 +938,15 @@ mod acting {
             Ok(x) => x,
             Err(e) => return failed(&e),
         };
-        if let Err(e) = plan.write(out) {
-            return failed(&e);
+        match plan.write(out) {
+            Ok(()) => {}
+            Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Outcome::BadInput(format!(
+                    "{}: a plan file is never replaced; choose another --out",
+                    out.display()
+                ))
+            }
+            Err(e) => return Outcome::BadInput(format!("{}: {e}", out.display())),
         }
         for c in considered.iter().filter(|c| !c.planned) {
             let why = c

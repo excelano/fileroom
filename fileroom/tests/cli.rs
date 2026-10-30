@@ -236,8 +236,12 @@ fn evaluate_plan_dispose_and_recover_act_on_a_records_root() {
         plan.records.len()
     )));
     let written = std::fs::read(cwd.join("plan.toml")).unwrap();
-    let (code, _, _) = fileroom(&plan_args, &cwd);
-    assert_eq!(code, 1, "a plan file is never replaced");
+    let (code, _, err) = fileroom(&plan_args, &cwd);
+    assert_eq!(code, 1);
+    assert!(
+        err.contains("plan.toml: a plan file is never replaced; choose another --out"),
+        "{err}"
+    );
     assert_eq!(std::fs::read(cwd.join("plan.toml")).unwrap(), written);
 
     let (code, _, err) = fileroom(&["dispose", "--root", root, "plan.toml"], &cwd);
