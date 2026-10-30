@@ -158,6 +158,7 @@ enum Outcome {
     BadInput(String),
     NoVerdict(String),
     Partial(String),
+    #[cfg(feature = "dispose")]
     Refused(String),
 }
 
@@ -240,6 +241,7 @@ fn main() -> ExitCode {
             eprintln!("fileroom: {message}");
             ExitCode::from(4)
         }
+        #[cfg(feature = "dispose")]
         Outcome::Refused(message) => {
             eprintln!("fileroom: {message}");
             ExitCode::from(5)
