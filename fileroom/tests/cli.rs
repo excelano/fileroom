@@ -59,7 +59,10 @@ fn show_log_and_check_read_the_examples() {
 
     let (code, out, err) = fileroom(&["log", full.to_str().unwrap()], dir.path());
     assert_eq!(code, 0, "{out}{err}");
-    assert!(out.contains("hold_applied        jdoe@example.com"), "{out}");
+    assert!(
+        out.contains("hold_applied        jdoe@example.com"),
+        "{out}"
+    );
     assert!(out.contains("at legal:contracts/C-4471/invoice-2024-0117.pdf.slpc"));
     assert!(out.contains("intact: 2 entries, head 0c5e40af"));
 
@@ -424,4 +427,99 @@ fn a_misfiled_container_in_holds_stops_plan_and_dispose() {
     assert_eq!(code, 1);
     assert!(err.contains("not a hold matter"), "{err}");
     assert!(planned.records.iter().all(|p| p.path.exists()));
+}
+
+#[test]
+fn fixity_sweeps_the_containers_named_and_logs_what_failed_or_moved() {
+    let dir = tempfile::tempdir().unwrap();
+    corpus::run(&corpus::Options {
+        out: dir.path().join("corpus"),
+        seed: 42,
+        count: 120,
+        as_of: "2026-10-01".into(),
+        mix: Vec::new(),
+        unfinished_intent: false,
+        nara: examples().join("schedule/grs-transmittal36.csv"),
+        demo: None,
+    })
+    .unwrap();
+    let cwd = dir.path().join("corpus");
+    let root = cwd.join("root");
+    let root = root.to_str().unwrap();
+    let truth = std::fs::read_to_string(cwd.join("ground-truth.csv")).unwrap();
+    let rows: Vec<Vec<&str>> = truth
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').collect())
+        .collect();
+    let broken = format!(
+        "shares/{}",
+        rows.iter().find(|r| r[8] == "broken").unwrap()[1]
+    );
+    let moved: Vec<String> = rows
+        .iter()
+        .filter(|r| r[9] == "true")
+        .map(|r| format!("shares/{}", r[1]))
+        .collect();
+    assert!(!moved.is_empty());
+    let sweep = [
+        "fixity",
+        "--root",
+        root,
+        "--actor",
+        "rm@example.com",
+        "--actor-id",
+        "rm",
+    ];
+
+    let leaf = Path::new(&broken).parent().unwrap().to_str().unwrap();
+    std::fs::copy(cwd.join(&moved[0]), cwd.join("copy.bin")).unwrap();
+    let (_, out, _) = fileroom(&[&sweep[..], &[leaf, "copy.bin"]].concat(), &cwd);
+    let checked: Vec<&str> = out
+        .lines()
+        .filter(|l| !l.contains("; report "))
+        .filter_map(|l| l.split_once(": "))
+        .map(|(p, _)| p)
+        .collect();
+    assert!(checked.contains(&broken.as_str()), "{out}");
+    assert!(checked
+        .iter()
+        .all(|p| *p == "copy.bin" || Path::new(p).parent() == Some(Path::new(leaf))));
+    assert!(out.contains("copy.bin: location not comparable"), "{out}");
+    let (code, out, _) = fileroom(&[&sweep[..], &["shares"]].concat(), &cwd);
+    assert_eq!(code, 0);
+    assert!(out.starts_with("0 checked: "), "without -r: {out}");
+
+    let (code, out, err) = fileroom(&[&sweep[..], &["-r", "shares"]].concat(), &cwd);
+    assert_eq!(code, 4, "{err}");
+    let paths: Vec<&Path> = out
+        .lines()
+        .filter(|l| !l.contains("; report "))
+        .filter_map(|l| l.split_once(": "))
+        .map(|(p, _)| Path::new(p))
+        .collect();
+    assert!(paths
+        .iter()
+        .all(|p| p.extension().is_some_and(|e| e == "slpc")));
+    assert!(paths.windows(2).all(|w| w[0] <= w[1]), "sorted");
+    assert!(out.contains(&format!("{broken}: ")) && out.contains(" hashes to "));
+    for m in &moved {
+        assert!(out.contains(&format!("{m}: moved from ")), "{out}");
+    }
+    let summary = out.lines().last().unwrap();
+    let report = summary.split("; report ").nth(1).unwrap();
+    assert!(Path::new(report).exists());
+    assert!(err.contains(&format!("{} moved", moved.len())), "{err}");
+
+    let (_, log, _) = fileroom(&["log", &broken], &cwd);
+    assert!(log.contains("fixity_failed       rm@example.com"), "{log}");
+    let (_, log, _) = fileroom(&["log", &moved[0]], &cwd);
+    assert!(log.contains("moved_detected      rm@example.com"), "{log}");
+
+    let (code, out, err) = fileroom(&[&sweep[..], &["-r", "shares"]].concat(), &cwd);
+    assert_eq!(code, 4, "the broken record stays broken");
+    assert!(err.contains(" 0 moved"), "{err}");
+    for m in &moved {
+        assert!(out.contains(&format!("{m}: ok")), "{out}");
+    }
 }
