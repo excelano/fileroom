@@ -474,7 +474,8 @@ fn fixity_sweeps_the_containers_named_and_logs_what_failed_or_moved() {
 
     let leaf = Path::new(&broken).parent().unwrap().to_str().unwrap();
     std::fs::copy(cwd.join(&moved[0]), cwd.join("copy.bin")).unwrap();
-    let (_, out, _) = fileroom(&[&sweep[..], &[leaf, "copy.bin"]].concat(), &cwd);
+    let (_, out, err) = fileroom(&[&sweep[..], &[leaf, "copy.bin"]].concat(), &cwd);
+    assert!(!err.contains("not searched"), "{err}");
     let checked: Vec<&str> = out
         .lines()
         .filter(|l| !l.contains("; report "))
@@ -486,9 +487,13 @@ fn fixity_sweeps_the_containers_named_and_logs_what_failed_or_moved() {
         .iter()
         .all(|p| *p == "copy.bin" || Path::new(p).parent() == Some(Path::new(leaf))));
     assert!(out.contains("copy.bin: location not comparable"), "{out}");
-    let (code, out, _) = fileroom(&[&sweep[..], &["shares"]].concat(), &cwd);
+    let (code, out, err) = fileroom(&[&sweep[..], &["shares"]].concat(), &cwd);
     assert_eq!(code, 0);
     assert!(out.starts_with("0 checked: "), "without -r: {out}");
+    assert_eq!(
+        err,
+        "fileroom: shares: subdirectories not searched; pass -r to search them\n"
+    );
 
     let (code, out, err) = fileroom(&[&sweep[..], &["-r", "shares"]].concat(), &cwd);
     assert_eq!(code, 4, "{err}");

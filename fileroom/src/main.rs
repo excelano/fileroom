@@ -810,14 +810,23 @@ fn containers(paths: &[PathBuf], recursive: bool) -> Vec<PathBuf> {
                 .map(|entries| entries.filter_map(Result::ok).map(|e| e.path()).collect())
                 .unwrap_or_default();
             inside.sort();
+            let mut skipped = false;
             for p in inside {
                 if p.is_dir() {
                     if recursive {
                         out.extend(containers(&[p], true));
+                    } else {
+                        skipped = true;
                     }
                 } else if p.extension().is_some_and(|e| e == "slpc") {
                     out.push(p);
                 }
+            }
+            if skipped {
+                eprintln!(
+                    "fileroom: {}: subdirectories not searched; pass -r to search them",
+                    path.display()
+                );
             }
         } else {
             out.push(path.clone());
