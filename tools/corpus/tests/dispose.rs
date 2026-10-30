@@ -476,3 +476,82 @@ fn an_unfinished_batch_or_a_missing_approval_refuses_before_anything_is_touched(
         2
     );
 }
+
+#[test]
+fn a_plan_survives_its_file_and_is_never_replaced() {
+    let corpus = Corpus::generate(120, 32, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    let path = corpus.dir.path().join("plan.toml");
+    plan.write(&path).unwrap();
+    assert_eq!(Plan::load(&path).unwrap(), plan);
+
+    let mut other = plan.clone();
+    other.approved_by.clear();
+    match other.write(&path) {
+        Err(Error::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists),
+        r => panic!("{r:?}"),
+    }
+    assert_eq!(Plan::load(&path).unwrap(), plan);
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let approved = "approved_by = [\"rm@example.com\"]";
+    assert!(text.contains(approved));
+    assert!(Plan::parse(&text.replace(approved, ""))
+        .unwrap()
+        .approved_by
+        .is_empty());
+    for (replacement, problem) in [
+        ("approved_by = \"rm@example.com\"", "not an array"),
+        ("approved_by = [1]", "not an array of strings"),
+    ] {
+        match Plan::parse(&text.replace(approved, replacement)) {
+            Err(Error::Malformed(m)) => {
+                assert_eq!(m.key, "approved_by");
+                assert_eq!(m.problem, problem);
+            }
+            r => panic!("{replacement}: {r:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_run_outside_the_plans_date_or_schedule_is_refused_before_anything_is_touched() {
+    let corpus = Corpus::generate(120, 33, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    let matcher = scopes(&corpus);
+    let before = corpus.containers().len();
+    let later = Date::parse("2026-10-02").unwrap();
+    for context in [
+        Context {
+            as_of: later,
+            ..corpus.context()
+        },
+        Context {
+            schedule_version: "20250101T000000Z-000000000000",
+            ..corpus.context()
+        },
+    ] {
+        let run = Run {
+            root: &corpus.root(),
+            plan: &plan,
+            context,
+            matcher: &matcher,
+            host: "test-host".into(),
+            user: "tester".into(),
+            component: "fileroom test".into(),
+            certificate: None,
+            operator_verified: false,
+        };
+        match dispose(&run, &mut clock(), &mut |_| {}) {
+            Err(Error::Malformed(m)) => assert_eq!(m.rule, "6.4"),
+            r => panic!("{r:?}"),
+        }
+    }
+    assert_eq!(corpus.containers().len(), before);
+    assert_eq!(
+        Register::open(corpus.root().join("register"))
+            .last()
+            .unwrap(),
+        1
+    );
+}

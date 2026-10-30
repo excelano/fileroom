@@ -222,6 +222,7 @@ name = "fileroom"
 version = "0.4.0"
 dependencies = [
  "clap",
+ "corpus",
  "csv",
  "gethostname",
  "sha2",
