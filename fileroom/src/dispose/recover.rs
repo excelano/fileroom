@@ -56,6 +56,7 @@ pub fn describe(root: &Path, sequence: u32) -> Result<Unfinished, Error> {
     if register.final_path(sequence).exists() || !register.intent_path(sequence).exists() {
         return Err(Refusal::NotUnfinished(sequence).into());
     }
+    drop(register.lock(sequence)?);
     register.unfinished(sequence)
 }
 
@@ -65,14 +66,15 @@ pub fn describe(root: &Path, sequence: u32) -> Result<Unfinished, Error> {
 /// one. Where it has none, the record is `unknown` if its container is gone
 /// and `skipped` with reason `not_attempted` if it is present; presence is
 /// read from the manifest's location through the share roots, and nothing
-/// is opened, deleted, or written there. The final is written by exclusive
-/// create, so a run still alive, or a second recovery, loses to whichever
-/// finishes first.
+/// is opened, deleted, or written there. The batch's lock is held
+/// throughout, so a run still alive where locks reach refuses this rather
+/// than racing it, and the final is written by exclusive create, so a second
+/// recovery loses to whichever finishes first.
 ///
 /// # Errors
 ///
-/// [`Refusal::NotUnfinished`], [`Refusal::AlreadyFinal`], or reading and
-/// writing the register.
+/// [`Refusal::Running`], [`Refusal::NotUnfinished`],
+/// [`Refusal::AlreadyFinal`], or reading and writing the register.
 pub fn recover(
     recovery: &Recovery<'_>,
     now: &mut dyn FnMut() -> Instant,
@@ -82,6 +84,7 @@ pub fn recover(
     }
     let register = Register::open(recovery.root.join("register"));
     let sequence = recovery.sequence;
+    let _lock = register.lock(sequence)?;
     if register.final_path(sequence).exists() {
         return Err(Refusal::AlreadyFinal(sequence).into());
     }

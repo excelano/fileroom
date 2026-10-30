@@ -5,7 +5,7 @@
 // Built with AI assistance (Claude, Anthropic)
 
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
@@ -488,6 +488,22 @@ pub struct Plan {
     pub manifest: Manifest,
 }
 
+/// A batch's lock (SPEC §6.7), released when dropped. Holds nothing where
+/// the file system cannot lock.
+#[derive(Debug)]
+pub struct BatchLock {
+    _file: Option<File>,
+}
+
+/// A claimed sequence and the lock its run holds until the final is written.
+#[derive(Debug)]
+pub struct Claim {
+    /// The sequence claimed.
+    pub sequence: u32,
+    /// Held for the run.
+    pub lock: BatchLock,
+}
+
 /// What a run states when it writes the final (SPEC §6.6).
 #[derive(Debug, Clone)]
 pub struct Completion {
@@ -640,6 +656,37 @@ impl Register {
         self.dir.join(format!("{sequence:06}.slpc"))
     }
 
+    /// The path of a batch's lock file.
+    #[must_use]
+    pub fn lock_path(&self, sequence: u32) -> PathBuf {
+        self.dir.join(format!("{sequence:06}.lock"))
+    }
+
+    /// Take a batch's lock (SPEC §6.7), creating its lock file if absent.
+    /// Held until the returned guard is dropped, or until the process ends.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::Running`] while another process holds it; opening the
+    /// file. A file system that cannot lock gives a guard holding nothing.
+    pub fn lock(&self, sequence: u32) -> Result<BatchLock, Error> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.lock_path(sequence))?;
+        match file.try_lock() {
+            Ok(()) => Ok(BatchLock { _file: Some(file) }),
+            Err(TryLockError::WouldBlock) => Err(Refusal::Running(sequence).into()),
+            Err(TryLockError::Error(e)) => match e.kind() {
+                std::io::ErrorKind::PermissionDenied => Err(Refusal::Running(sequence).into()),
+                std::io::ErrorKind::Unsupported => Ok(BatchLock { _file: None }),
+                _ => Err(e.into()),
+            },
+        }
+    }
+
     /// The highest sequence any intent claims, or 0 for an empty register.
     ///
     /// # Errors
@@ -730,14 +777,15 @@ impl Register {
         })
     }
 
-    /// Claim the next sequence by writing its intent exclusively (SPEC §6.2,
-    /// §6.7). Returns the sequence claimed.
+    /// Claim the next sequence by taking its lock and writing its intent
+    /// exclusively (SPEC §6.2, §6.7).
     ///
     /// # Errors
     ///
     /// [`Refusal::Unfinished`] where the last batch has no final, or where
-    /// another run claimed the sequence first; a plan with no rows (`6.3`).
-    pub fn claim(&self, plan: &Plan) -> Result<u32, Error> {
+    /// another run claimed the sequence first; [`Refusal::Running`] where
+    /// another run holds the sequence's lock; a plan with no rows (`6.3`).
+    pub fn claim(&self, plan: &Plan) -> Result<Claim, Error> {
         if plan.manifest.rows.is_empty() {
             return Err(Malformed::new(
                 "6.3",
@@ -759,6 +807,7 @@ impl Register {
             return Err(Refusal::Unfinished(Box::new(self.unfinished(last)?)).into());
         }
         let sequence = last + 1;
+        let lock = self.lock(sequence)?;
         let mut file = match exclusive(&self.intent_path(sequence)) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -824,7 +873,7 @@ impl Register {
             &doc,
             &manifest,
         )?;
-        Ok(sequence)
+        Ok(Claim { sequence, lock })
     }
 
     /// Append one outcome to a batch's journal (SPEC §6.5), creating the

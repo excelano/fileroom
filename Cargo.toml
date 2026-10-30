@@ -11,7 +11,7 @@ edition = "2021"
 authors = ["David M. Anderson"]
 license = "MIT"
 repository = "https://github.com/excelano/fileroom"
-rust-version = "1.88"
+rust-version = "1.89"
 
 [profile.release]
 overflow-checks = true

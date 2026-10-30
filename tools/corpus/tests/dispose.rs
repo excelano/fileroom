@@ -694,3 +694,41 @@ fn a_record_that_cannot_be_deleted_is_failed_and_the_batch_still_finishes() {
     assert!(v.intact(), "{:?}", v.broken);
     assert_eq!(v.finals[1].destroyed as usize, plan.records.len() - inside);
 }
+
+#[test]
+fn a_run_holds_its_batch_lock_until_its_final_is_written() {
+    let corpus = Corpus::generate(150, 38, false);
+    let plan = make_plan(&corpus, &corpus.containers());
+    let matcher = scopes(&corpus);
+    let register = Register::open(corpus.root().join("register"));
+    let next = register.lock(2).unwrap();
+    match run_plan(&corpus, &plan, &matcher) {
+        Err(Error::Refused(Refusal::Running(2))) => {}
+        other => panic!("{other:?}"),
+    }
+    assert!(!register.intent_path(2).exists());
+    drop(next);
+
+    let run = Run {
+        root: &corpus.root(),
+        plan: &plan,
+        context: corpus.context(),
+        matcher: &matcher,
+        host: "test-host".into(),
+        user: "tester".into(),
+        component: "fileroom test".into(),
+        certificate: None,
+        operator_verified: false,
+    };
+    let mut during = Vec::new();
+    dispose(&run, &mut clock(), &mut |_| {
+        during.push(matches!(
+            register.lock(2),
+            Err(Error::Refused(Refusal::Running(2)))
+        ));
+    })
+    .unwrap();
+    assert!(!during.is_empty() && during.iter().all(|&held| held));
+    register.lock(2).unwrap();
+    assert!(register.verify().unwrap().intact());
+}

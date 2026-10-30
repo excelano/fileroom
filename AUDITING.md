@@ -109,10 +109,15 @@ at a published genesis value. Verification walks the register from the
 first batch and reports the first point at which any hash, any sequence
 number, or any intent fails to match; it repairs nothing.
 
-A run that dies leaves an intent without a final. No run finishes it
-automatically, because nothing in the register can tell a crashed run from
-one still executing on another machine. A person confirms the run is dead,
-and recovery then finishes the batch from the journal and from what is
+A run holds an operating-system lock on its batch's lock file from before
+it writes the intent until its final is written, and the lock is released
+when the run's process ends, however it ends. A run that dies therefore
+leaves an intent without a final and a lock nobody holds. No run finishes
+it automatically. Recovery refuses while the lock is held, which tells a
+live run from a dead one wherever the file system carries locks between
+machines, as SMB does; where it does not, nothing in the register can tell
+them apart. Either way a person confirms the run is dead, and recovery then
+takes the lock and finishes the batch from the journal and from what is
 present: journaled outcomes stand, a planned record still present is
 recorded as skipped and not attempted, and one gone with no journal entry
 is recorded as unknown. Recovery destroys nothing, and the final it writes

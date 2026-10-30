@@ -1169,7 +1169,7 @@ impl Gen {
                     .into(),
             manifest: Manifest { rows: rows.clone() },
         };
-        let seq = r.claim(&plan).map_err(|e| e.to_string())?;
+        let seq = r.claim(&plan).map_err(|e| e.to_string())?.sequence;
         let mut done = rows.clone();
         for (i, row) in done.iter_mut().enumerate() {
             let (outcome, reason) = if i == 3 {
@@ -1215,7 +1215,7 @@ impl Gen {
             second.started = instant(Date::new(2026, 9, 2).unwrap(), 8, 0, 0);
             second.plan_id = self.rng.uuid7(unix_ms(second.started));
             second.manifest.rows.truncate(1);
-            let seq = r.claim(&second).map_err(|e| e.to_string())?;
+            let seq = r.claim(&second).map_err(|e| e.to_string())?.sequence;
             r.journal_append(
                 seq,
                 &JournalEntry {

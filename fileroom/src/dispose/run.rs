@@ -278,7 +278,10 @@ pub fn dispose(
         .scope_statement
         .clone()
         .unwrap_or_else(|| DEFAULT_SCOPE_STATEMENT.to_owned());
-    let sequence = register.claim(&register::Plan {
+    let register::Claim {
+        sequence,
+        lock: _lock,
+    } = register.claim(&register::Plan {
         started,
         host: run.host.clone(),
         user: run.user.clone(),

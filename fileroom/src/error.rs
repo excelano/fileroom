@@ -124,6 +124,9 @@ pub enum Refusal {
     AlreadyFinal(u32),
     /// A batch that is not unfinished cannot be recovered.
     NotUnfinished(u32),
+    /// Another process holds the batch's lock (SPEC §6.7): its run is still
+    /// executing, here or on another machine.
+    Running(u32),
     /// A plan nobody approved is not executed.
     Unapproved,
     /// The root requires a verified operator (SPEC §7.1) and this run has
@@ -137,6 +140,10 @@ impl fmt::Display for Refusal {
             Self::Unfinished(u) => write!(f, "{u}"),
             Self::AlreadyFinal(n) => write!(f, "batch {n:06} is already final"),
             Self::NotUnfinished(n) => write!(f, "batch {n:06} is not an unfinished batch"),
+            Self::Running(n) => write!(
+                f,
+                "batch {n:06} is locked by a run still executing on this or another machine"
+            ),
             Self::Unapproved => f.write_str("the plan records no approval"),
             Self::OperatorIdentity => f.write_str(
                 "the root requires a verified operator (settings.toml: operator_identity = \"verified\") and this run has none",

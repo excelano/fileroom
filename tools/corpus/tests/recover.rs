@@ -269,7 +269,14 @@ fn two_recoveries_write_one_final() {
     let won = results.iter().filter(|r| r.is_ok()).count();
     let lost = results
         .iter()
-        .filter(|r| matches!(r, Err(Error::Refused(Refusal::AlreadyFinal(2)))))
+        .filter(|r| {
+            matches!(
+                r,
+                Err(Error::Refused(
+                    Refusal::AlreadyFinal(2) | Refusal::Running(2)
+                ))
+            )
+        })
         .count();
     assert_eq!((won, lost), (1, 1), "{results:?}");
     let v = corpus.register().verify().unwrap();
@@ -316,4 +323,30 @@ fn a_root_requiring_a_verified_operator_is_not_recovered_without_one() {
     verified.operator_verified = true;
     recover(&verified, &mut clock()).unwrap();
     assert!(register.final_path(sequence).exists());
+}
+
+#[test]
+fn a_batch_whose_lock_is_held_is_not_recovered() {
+    let corpus = Corpus::generate(50);
+    let plan = corpus.plan();
+    crash_after(&corpus, &plan, 3);
+    let register = corpus.register();
+    let live = register.lock(2).unwrap();
+    assert!(matches!(
+        fileroom::dispose::recover::describe(&corpus.root(), 2),
+        Err(Error::Refused(Refusal::Running(2)))
+    ));
+    assert!(matches!(
+        recover(&recovery(&corpus, 2), &mut clock()),
+        Err(Error::Refused(Refusal::Running(2)))
+    ));
+    assert!(!register.final_path(2).exists());
+    drop(live);
+    assert_eq!(
+        recover(&recovery(&corpus, 2), &mut clock())
+            .unwrap()
+            .sequence,
+        2
+    );
+    assert!(corpus.register().verify().unwrap().intact());
 }

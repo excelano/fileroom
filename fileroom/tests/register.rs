@@ -186,7 +186,7 @@ fn completion(rows: Vec<Row>, recovered: Option<(Instant, Agent)>) -> Completion
 fn claim_journal_finalize_then_the_next_batch() {
     let dir = tempfile::tempdir().unwrap();
     let r = Register::open(dir.path());
-    assert_eq!(r.claim(&plan()).unwrap(), 1);
+    assert_eq!(r.claim(&plan()).unwrap().sequence, 1);
     let v = r.verify().unwrap();
     assert!(v.intact() && v.finals.is_empty());
     assert!(v.unfinished.unwrap().last_outcome.is_none());
@@ -229,7 +229,7 @@ fn claim_journal_finalize_then_the_next_batch() {
     assert_eq!((v.finals[0].planned, v.finals[0].destroyed), (2, 1));
     assert!(v.unfinished.is_none());
 
-    assert_eq!(r.claim(&plan()).unwrap(), 2);
+    assert_eq!(r.claim(&plan()).unwrap().sequence, 2);
     let (batch, manifest) = r.intent(2).unwrap();
     assert_eq!(batch.disposition.sequence, 2);
     assert_eq!(manifest.rows.len(), 2);
@@ -282,13 +282,24 @@ fn two_runs_claiming_one_sequence_yield_one_intent() {
         .into_iter()
         .map(|h| h.join().unwrap())
         .collect();
-    let won = results.iter().filter(|r| matches!(r, Ok(1))).count();
+    let won = results
+        .iter()
+        .filter(|r| matches!(r, Ok(c) if c.sequence == 1))
+        .count();
     let refused = results
         .iter()
-        .filter(|r| matches!(r, Err(Error::Refused(Refusal::Unfinished(u))) if u.sequence == 1))
+        .filter(|r| {
+            matches!(r, Err(Error::Refused(Refusal::Unfinished(u))) if u.sequence == 1)
+                || matches!(r, Err(Error::Refused(Refusal::Running(1))))
+        })
         .count();
     assert_eq!((won, refused), (1, 1), "{results:?}");
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    let mut names: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["000001.intent.slpc", "000001.lock"]);
 }
 
 #[test]

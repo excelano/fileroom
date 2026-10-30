@@ -30,7 +30,7 @@ Exit codes:
   2  bad command line
   3  no verdict: an undetermined container, or one declaring a version this build does not implement
   4  partial: a disposal run skipped or failed some of its records
-  5  refused: an unfinished batch, or a plan nobody approved
+  5  refused: an unfinished batch, a batch whose run is still executing, or a plan nobody approved
 
 Output that cannot be written, as when a pipe closes early, does not stop a
 command or change its exit code.
@@ -1162,7 +1162,10 @@ mod acting {
         };
         let unfinished = match dispose::recover::describe(root, last) {
             Ok(u) => u,
-            Err(Error::Refused(r)) => return Outcome::Refused(format!("{r}: nothing to recover")),
+            Err(Error::Refused(r @ fileroom::Refusal::NotUnfinished(_))) => {
+                return Outcome::Refused(format!("{r}: nothing to recover"))
+            }
+            Err(Error::Refused(r)) => return Outcome::Refused(r.to_string()),
             Err(e) => return failed(&e),
         };
         let settings = match Settings::load(root.join("settings.toml")) {
