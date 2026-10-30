@@ -528,14 +528,31 @@ pub fn evaluate_container<R: Read + Seek>(
     let Table::Record(record) = &table else {
         return Ok(None);
     };
+    evaluate_record(c, &table, record, unapplied, context).map(Some)
+}
+
+/// Evaluate a record already read from the open container's flyleaf, where
+/// `table` is what it was read from.
+///
+/// # Errors
+///
+/// As [`evaluate_container`].
+pub(crate) fn evaluate_record<R: Read + Seek>(
+    c: &mut Container<R>,
+    table: &Table,
+    record: &Record,
+    unapplied: &[Identifier],
+    context: Context<'_>,
+) -> Result<Evaluation, Error> {
+    let as_of = context.as_of;
     if let Err(m) = records::components_present(record, c)? {
-        return Ok(Some(Evaluation::cannot(as_of, Reason::MalformedProfile(m))));
+        return Ok(Evaluation::cannot(as_of, Reason::MalformedProfile(m)));
     }
-    let events = match events::verify(c, &table)? {
+    let events = match events::verify(c, table)? {
         Ok(events) => events,
-        Err(m) => return Ok(Some(Evaluation::cannot(as_of, Reason::MalformedProfile(m)))),
+        Err(m) => return Ok(Evaluation::cannot(as_of, Reason::MalformedProfile(m))),
     };
-    Ok(Some(evaluate(record, &events, unapplied, context)))
+    Ok(evaluate(record, &events, unapplied, context))
 }
 
 /// Evaluate the container at a path, or `None` where the file is not a

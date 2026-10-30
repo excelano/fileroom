@@ -11,7 +11,7 @@ use slpc::Container;
 
 use crate::conventions::{Hash, Identifier, Instant};
 use crate::dispose::certificate;
-use crate::dispose::eligibility::{evaluate_container, Context, Outcome as Eligibility};
+use crate::dispose::eligibility::{evaluate_record, Context, Outcome as Eligibility};
 use crate::dispose::plan::{Plan, DEFAULT_SCOPE_STATEMENT};
 use crate::records::{self, Hold, HoldStatus, Reading, Record, Table};
 use crate::register::{self, Completion, Disposition, JournalEntry, Outcome, Register, State};
@@ -369,18 +369,20 @@ fn destroy_one(run: &Run<'_>, planned: &crate::dispose::plan::Planned) -> Record
     if Hash::of(c.flyleaf_bytes()) != planned.flyleaf_sha256 {
         return skipped("changed_since_plan".into());
     }
-    let unapplied = match records::read(c.flyleaf()) {
-        Reading::Table(Table::Record(r)) if r.id == planned.id => {
-            match run.matcher.unapplied(&r, c.flyleaf()) {
-                Ok(u) => u,
-                Err(e) => return skipped(format!("scope_evaluation_failed:{e}")),
-            }
-        }
+    let Reading::Table(table) = records::read(c.flyleaf()) else {
+        return skipped("changed_since_plan".into());
+    };
+    let record = match &table {
+        Table::Record(r) if r.id == planned.id => r,
         _ => return skipped("changed_since_plan".into()),
     };
-    match evaluate_container(&mut c, &unapplied, run.context) {
-        Ok(Some(e)) if e.outcome == Eligibility::Eligible => {}
-        Ok(Some(e)) => {
+    let unapplied = match run.matcher.unapplied(record, c.flyleaf()) {
+        Ok(u) => u,
+        Err(e) => return skipped(format!("scope_evaluation_failed:{e}")),
+    };
+    match evaluate_record(&mut c, &table, record, &unapplied, run.context) {
+        Ok(e) if e.outcome == Eligibility::Eligible => {}
+        Ok(e) => {
             let reasons: Vec<String> = e.reasons.iter().map(ToString::to_string).collect();
             return skipped(if reasons.is_empty() {
                 e.outcome.to_string()
@@ -388,7 +390,6 @@ fn destroy_one(run: &Run<'_>, planned: &crate::dispose::plan::Planned) -> Record
                 reasons.join(";")
             });
         }
-        Ok(None) => return skipped("unclassified".into()),
         Err(e) => return skipped(format!("unreadable:{e}")),
     }
     drop(c);
