@@ -1153,19 +1153,19 @@ fn final_flyleaf(
 /// reached the server, so an unsupported flush is not a failure.
 fn flush(file: &File) -> std::io::Result<()> {
     match file.sync_all() {
-        Err(e) if e.kind() == std::io::ErrorKind::Unsupported || e.raw_os_error() == Some(45) => {
-            match file.sync_data() {
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::Unsupported
-                        || e.raw_os_error() == Some(45) =>
-                {
-                    Ok(())
-                }
-                other => other,
-            }
-        }
+        Err(e) if unsupported(&e) => match file.sync_data() {
+            Err(e) if unsupported(&e) => Ok(()),
+            other => other,
+        },
         other => other,
     }
+}
+
+/// std reads EOPNOTSUPP as `Unsupported`; on macOS ENOTSUP is a separate
+/// code, 45, and SMB mounts there return it.
+fn unsupported(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::Unsupported
+        || (cfg!(target_os = "macos") && e.raw_os_error() == Some(45))
 }
 
 fn count(n: u64) -> Item {
