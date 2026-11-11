@@ -12,3 +12,7 @@ eligible and what destruction does. `tools/corpus` generates a deterministic tes
 root and the ground truth for evaluating it; it is a workspace member and is
 never published. `spec/` is the specification repository as a submodule, which
 the tests read, so clone with `--recurse-submodules`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
