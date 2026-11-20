@@ -63,6 +63,7 @@ fn every_container_gets_a_verdict_and_the_root_verifies() {
 
     let mut non_conformant = 0;
     let mut undetermined = 0;
+    let mut out_of_scope = 0;
     for path in files
         .iter()
         .filter(|p| p.extension().is_some_and(|e| e == "slpc"))
@@ -71,12 +72,14 @@ fn every_container_gets_a_verdict_and_the_root_verifies() {
             Verdict::Conformant => {}
             Verdict::NonConformant(_) => non_conformant += 1,
             Verdict::Undetermined(_) => undetermined += 1,
+            Verdict::OutOfScope(_) => out_of_scope += 1,
             other => panic!("{}: {other}", path.display()),
         }
     }
     let expects = |reason: &str| rows.iter().filter(|r| r[5] == reason).count();
     assert_eq!(non_conformant, expects("malformed_container"));
     assert_eq!(undetermined, expects("undetermined_container"));
+    assert_eq!(out_of_scope, expects("slipcase_version_unsupported"));
 
     let root = dir.path().join("root");
     let v = Register::open(root.join("register")).verify().unwrap();

@@ -1049,7 +1049,7 @@ impl Gen {
                     path: rel,
                     id: record.id.to_string(),
                     case,
-                    truth: cannot("malformed_container"),
+                    truth: cannot("slipcase_version_unsupported"),
                     fixity,
                     moved,
                 });
