@@ -507,6 +507,10 @@ fn check(paths: &[PathBuf]) -> Outcome {
     let mut no_verdict = 0;
     for path in paths {
         let verdict = match Container::open(path) {
+            Err(fileroom::slpc::Error::Unsupported(fileroom::slpc::Unsupported::Version(v))) => {
+                no_verdict += 1;
+                format!("out of scope: declares slipcase_version {v}")
+            }
             Err(fileroom::slpc::Error::Unsupported(u)) => {
                 no_verdict += 1;
                 format!("undetermined: {u}")

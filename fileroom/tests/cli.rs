@@ -92,6 +92,36 @@ fn show_log_and_check_read_the_examples() {
 }
 
 #[test]
+fn a_version_1_0_container_is_out_of_scope_for_show_and_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("old.slpc");
+    std::fs::write(
+        &old,
+        corpus::build::raw_zip(&[
+            (
+                "slipcase.metadata.toml",
+                b"slipcase_version = \"1.0\"\n\n[payload]\nfile = \"a.txt\"\n",
+                false,
+            ),
+            ("a.txt", b"x", false),
+        ]),
+    )
+    .unwrap();
+    let old = old.to_str().unwrap();
+
+    let (code, _, err) = fileroom(&["show", old], dir.path());
+    assert_eq!(code, 3, "{err}");
+    assert!(err.contains("slipcase_version \"1.0\""), "{err}");
+
+    let (code, out, err) = fileroom(&["check", old], dir.path());
+    assert_eq!(code, 3, "{out}{err}");
+    assert!(
+        out.contains("old.slpc: out of scope: declares slipcase_version 1.0"),
+        "{out}"
+    );
+}
+
+#[test]
 fn register_verify_and_schedule_read_a_records_root() {
     let root = tempfile::tempdir().unwrap();
     let register = root.path().join("register");
