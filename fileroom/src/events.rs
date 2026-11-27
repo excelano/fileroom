@@ -12,10 +12,11 @@ use std::io::{Cursor, Read, Seek, Write};
 use slpc::toml_edit::{DocumentMut, InlineTable, Item, Table as TomlTable, Value};
 use slpc::{Container, MemberError, Repack};
 
-use crate::conventions::{Agent, Hash, Identifier, Instant};
+use crate::conventions::{Hash, Identifier, Instant};
 use crate::keys::Keys;
 use crate::location::Location;
 use crate::log::Log;
+use crate::records::Agent;
 use crate::records::{self, Kind, Reading, Table, EVENTS_MEMBER};
 use crate::{Error, Malformed};
 
@@ -390,7 +391,7 @@ fn check_log(
             )
         } else {
             Malformed::new(
-                "CONVENTIONS 5.3",
+                "CONVENTIONS 4.3",
                 format!("{EVENTS_MEMBER}[{}]", broken.seq - 1),
                 broken.to_string(),
             )
@@ -676,7 +677,7 @@ where
     c.member(EVENTS_MEMBER)?.read_to_end(&mut bytes)?;
     let mut log = Log::parse(ENTRY, bytes, EVENTS_MEMBER)?;
     if let Err(broken) = log.verify(id.as_str().as_bytes()) {
-        return Err(Malformed::new("CONVENTIONS 5.3", EVENTS_MEMBER, broken.to_string()).into());
+        return Err(Malformed::new("CONVENTIONS 4.3", EVENTS_MEMBER, broken.to_string()).into());
     }
     if log.head().as_ref() != Some(head) {
         return Err(Malformed::new(

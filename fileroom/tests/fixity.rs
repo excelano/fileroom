@@ -7,9 +7,10 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use common::{examples, pack};
-use fileroom::conventions::{Agent, Date, Instant};
+use fileroom::conventions::{Date, Instant};
 use fileroom::events::{self, EventType};
 use fileroom::fixity::{self, Finding, Sweep};
+use fileroom::records::Agent;
 use fileroom::records::{self, Reading, Table};
 use fileroom::settings::Settings;
 use fileroom::slpc::{Container, Repack};

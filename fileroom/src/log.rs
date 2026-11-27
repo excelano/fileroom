@@ -1,4 +1,4 @@
-//! Chained logs (CONVENTIONS §5): a TOML array of tables whose entries are
+//! Chained logs (CONVENTIONS §4): a TOML array of tables whose entries are
 //! delimited by header line, hashed as stored, and linked by `prev`.
 //
 // Author: David M. Anderson
@@ -12,7 +12,7 @@ use crate::conventions::{Hash, Instant};
 use crate::keys::Keys;
 use crate::Malformed;
 
-const FORM: &str = "CONVENTIONS 5.2";
+const FORM: &str = "CONVENTIONS 4.2";
 
 /// One entry: the three keys every entry carries, the rest as a table, and
 /// where its bytes lie in the file.
@@ -68,8 +68,8 @@ impl Log {
     ///
     /// # Errors
     ///
-    /// The form is wrong (`CONVENTIONS 5.2`), or an entry lacks a required
-    /// key or has one of the wrong type (`CONVENTIONS 5.1`).
+    /// The form is wrong (`CONVENTIONS 4.2`), or an entry lacks a required
+    /// key or has one of the wrong type (`CONVENTIONS 4.1`).
     pub fn parse(name: &str, bytes: Vec<u8>, at: &str) -> Result<Self, Malformed> {
         let header = format!("[[{name}]]\n");
         let fail = |problem: &str| Malformed::new(FORM, at, problem);
@@ -117,13 +117,13 @@ impl Log {
             .enumerate()
             .map(|(i, (table, (start, end)))| {
                 let k = Keys::new(table, format!("{at}[{i}]"));
-                let seq = k.integer("CONVENTIONS 5.1", "seq")?;
+                let seq = k.integer("CONVENTIONS 4.1", "seq")?;
                 Ok(Entry {
                     seq: u64::try_from(seq).map_err(|_| {
-                        Malformed::new("CONVENTIONS 5.1", k.path("seq"), "negative")
+                        Malformed::new("CONVENTIONS 4.1", k.path("seq"), "negative")
                     })?,
-                    at: k.instant("CONVENTIONS 5.1", "at")?,
-                    prev: k.hash("CONVENTIONS 5.1", "prev")?,
+                    at: k.instant("CONVENTIONS 4.1", "at")?,
+                    prev: k.hash("CONVENTIONS 4.1", "prev")?,
                     table: table.clone(),
                     start,
                     end,
@@ -234,7 +234,7 @@ impl Log {
         for (key, item) in body {
             if matches!(key, "seq" | "at" | "prev") {
                 return Err(Malformed::new(
-                    "CONVENTIONS 5.1",
+                    "CONVENTIONS 4.1",
                     key,
                     "set by the log, not the entry",
                 ));
@@ -276,7 +276,8 @@ impl Log {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conventions::{Agent, Date};
+    use crate::conventions::Date;
+    use crate::records::Agent;
 
     fn at(day: u8) -> Instant {
         Instant {

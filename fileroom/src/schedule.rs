@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 
 use slpc::toml_edit::{DocumentMut, Item, Value};
 
-use crate::conventions::{Agent, Hash, Instant};
+use crate::conventions::{Hash, Instant};
 use crate::keys::Keys;
+use crate::records::Agent;
 use crate::{Error, Malformed};
 
 /// `Temporary` or `Permanent` (SPEC §3.2).

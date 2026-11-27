@@ -9,7 +9,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use common::{examples, pack};
-use fileroom::conventions::{Agent, Date, Instant};
+use fileroom::conventions::{Date, Instant};
+use fileroom::records::Agent;
 use fileroom::schedule::Store;
 
 fn fileroom(args: &[&str], cwd: &Path) -> (i32, String, String) {
@@ -69,7 +70,7 @@ fn show_log_and_check_read_the_examples() {
     let broken = packed(dir.path(), "invalid/events-chain-broken");
     let (code, _, err) = fileroom(&["log", broken.to_str().unwrap()], dir.path());
     assert_eq!(code, 1);
-    assert!(err.contains("CONVENTIONS §5.3"), "{err}");
+    assert!(err.contains("CONVENTIONS §4.3"), "{err}");
 
     let hold = packed(dir.path(), "valid/hold-active");
     let mismatch = packed(dir.path(), "invalid/fixity-mismatch");

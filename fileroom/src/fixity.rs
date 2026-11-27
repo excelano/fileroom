@@ -12,9 +12,10 @@ use std::path::{Path, PathBuf};
 use slpc::toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value};
 use slpc::{Container, MemberError};
 
-use crate::conventions::{Agent, Hash, Instant};
+use crate::conventions::{Hash, Instant};
 use crate::events::{self, EventType, NewEvent};
 use crate::location::{Location, Mounts};
+use crate::records::Agent;
 use crate::records::{self, Reading, Record, Table as Profile};
 use crate::settings::Settings;
 use crate::Error;

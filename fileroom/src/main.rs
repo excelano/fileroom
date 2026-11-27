@@ -307,8 +307,8 @@ fn print_record(r: &records::Record) {
         line("marking", &m);
     }
     line(
-        "creator",
-        &format!("{} ({})", r.creator.email, r.creator.id),
+        "captured by",
+        &format!("{} ({})", r.captured_by.email, r.captured_by.id),
     );
     line(
         "custodian",
@@ -727,7 +727,7 @@ fn fixity(root: &Path, actor: String, actor_id: Option<String>, paths: &[PathBuf
         Ok(s) => s,
         Err(e) => return failed(&e),
     };
-    let actor = fileroom::conventions::Agent {
+    let actor = fileroom::records::Agent {
         id: actor_id.unwrap_or_else(|| actor.clone()),
         email: actor,
     };
@@ -1189,7 +1189,7 @@ mod acting {
         let recovery = dispose::Recovery {
             root,
             sequence: last,
-            confirmed_by: fileroom::conventions::Agent {
+            confirmed_by: fileroom::records::Agent {
                 email: confirmed_by,
                 id: directory_id,
             },

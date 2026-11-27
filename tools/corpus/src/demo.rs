@@ -12,8 +12,9 @@ use crate::build::{Aggregation, Matter, Record, SeriesEntry};
 use crate::dates::{add_days, instant, unix_ms};
 use crate::rng::Rng;
 use clap::ValueEnum;
-use fileroom::conventions::{Agent, Date, Identifier, Instant};
+use fileroom::conventions::{Date, Identifier, Instant};
 use fileroom::location::Location;
+use fileroom::records::Agent;
 use fileroom::schedule::Store;
 
 /// The program the history names, as the invented company would have seen it.
@@ -738,7 +739,7 @@ impl Demo {
             content: Vec::new(),
             essential: false,
             marking: None,
-            creator: agent.clone(),
+            captured_by: agent.clone(),
             custodian: agent,
             series: Vec::new(),
             holds: Vec::new(),

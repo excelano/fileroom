@@ -4,7 +4,8 @@
 mod common;
 
 use common::examples;
-use fileroom::conventions::{Agent, Date, Instant};
+use fileroom::conventions::{Date, Instant};
+use fileroom::records::Agent;
 use fileroom::schedule::{
     Cutoff, DisposalAction, Period, RowKind, Schedule, Store, Unit, VersionId,
 };

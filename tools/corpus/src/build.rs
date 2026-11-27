@@ -6,9 +6,10 @@ use std::io::Cursor;
 
 use std::io::Read;
 
-use fileroom::conventions::{Agent, Date, Hash, Identifier, Instant};
+use fileroom::conventions::{Date, Hash, Identifier, Instant};
 use fileroom::events::{self, EventType, NewEvent, Started};
 use fileroom::location::Location;
+use fileroom::records::Agent;
 use fileroom::records::{
     self, Aggregation as AggregationTable, AggregationStatus, Component, Hold, HoldEntry,
     HoldStatus, HoldType, Kind, New, Relation, RelationType, Series, COMPONENTS_PREFIX,
@@ -70,7 +71,7 @@ pub struct Record {
     pub content: Vec<u8>,
     pub essential: bool,
     pub marking: Option<String>,
-    pub creator: Agent,
+    pub captured_by: Agent,
     pub custodian: Agent,
     pub series: Vec<SeriesEntry>,
     pub holds: Vec<(Identifier, &'static str, Date)>,
@@ -254,7 +255,7 @@ impl Record {
             essential: self.essential,
             marking: self.marking.clone(),
             events_head: head,
-            creator: self.creator.clone(),
+            captured_by: self.captured_by.clone(),
             custodian: self.custodian.clone(),
             content_sha256: Hash::of(&self.content),
             series: self

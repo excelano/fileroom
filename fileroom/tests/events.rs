@@ -6,9 +6,10 @@ mod common;
 use std::io::{Cursor, Read};
 
 use common::{examples, pack};
-use fileroom::conventions::{Agent, Date, Hash, Instant};
+use fileroom::conventions::{Date, Hash, Instant};
 use fileroom::events::{self, EventType, MemberChange, NewEvent, Step};
 use fileroom::location::Location;
+use fileroom::records::Agent;
 use fileroom::records::{self, Kind, New, Reading, Table, EVENTS_MEMBER};
 use fileroom::slpc::toml_edit::{DocumentMut, InlineTable, Item, Value};
 use fileroom::slpc::{Container, Repack};
@@ -157,7 +158,7 @@ fn a_crate_written_log_detects_tampering() {
     let edited = log.replacen("captured", "classified", 1);
     assert_eq!(
         verdict(with_log(&container, edited.as_bytes())).0,
-        "CONVENTIONS 5.3"
+        "CONVENTIONS 4.3"
     );
 
     let last_edited = log.replacen("matter = \"01927d01", "matter = \"01927d02", 1);
@@ -176,7 +177,7 @@ fn a_crate_written_log_detects_tampering() {
     let crlf = log.replace('\n', "\r\n");
     assert_eq!(
         verdict(with_log(&container, crlf.as_bytes())).0,
-        "CONVENTIONS 5.2"
+        "CONVENTIONS 4.2"
     );
 }
 
@@ -193,7 +194,7 @@ fn nothing_is_written_when_the_container_is_in_doubt() {
         }
     };
     let broken = pack(&examples().join("invalid/events-chain-broken"));
-    assert_eq!(refused(broken, &hold_applied()).0, "CONVENTIONS 5.3");
+    assert_eq!(refused(broken, &hold_applied()).0, "CONVENTIONS 4.3");
     let head_wrong = pack(&examples().join("invalid/events-head-wrong"));
     assert_eq!(
         refused(head_wrong, &hold_applied()).1,

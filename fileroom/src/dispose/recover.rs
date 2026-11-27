@@ -6,8 +6,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::conventions::{Agent, Instant};
+use crate::conventions::Instant;
 use crate::dispose::certificate;
+use crate::records::Agent;
 use crate::register::{
     Completion, Disposition, JournalEntry, Outcome, Register, State, Unfinished,
 };

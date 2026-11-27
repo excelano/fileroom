@@ -3,7 +3,8 @@
 
 use slpc::toml_edit::{Item, TableLike, Value};
 
-use crate::conventions::{Agent, Date, Hash, Identifier, Instant, Temporal};
+use crate::conventions::{Date, Hash, Identifier, Instant, Temporal};
+use crate::records::Agent;
 use crate::Malformed;
 
 /// Typed access to a TOML table, with each failure naming the key and the rule.
@@ -121,7 +122,7 @@ impl<'a> Keys<'a> {
     }
 
     pub(crate) fn hash(&self, rule: &'static str, key: &str) -> Result<Hash, Malformed> {
-        Hash::parse(self.string(rule, key)?).map_err(|e| self.fail("CONVENTIONS 3", key, e))
+        Hash::parse(self.string(rule, key)?).map_err(|e| self.fail("CONVENTIONS 2", key, e))
     }
 
     fn temporal(&self, rule: &'static str, key: &str) -> Result<Temporal, Malformed> {
@@ -160,7 +161,7 @@ impl<'a> Keys<'a> {
             Temporal::Date(_) => Err(self.fail(rule, key, "a date, not an instant")),
             Temporal::LocalTime => Err(self.fail(rule, key, "a time, not an instant")),
             Temporal::Unzoned => Err(self.fail(
-                "CONVENTIONS 4",
+                "CONVENTIONS 3",
                 key,
                 "an instant is an offset date-time in UTC, written with Z",
             )),
@@ -190,8 +191,8 @@ impl<'a> Keys<'a> {
     pub(crate) fn agent(&self, rule: &'static str, key: &str) -> Result<Agent, Malformed> {
         let t = self.table(rule, key)?;
         Ok(Agent {
-            email: t.string("CONVENTIONS 2", "email")?.to_owned(),
-            id: t.nonempty("CONVENTIONS 2", "id")?.to_owned(),
+            email: t.string("1.1", "email")?.to_owned(),
+            id: t.nonempty("1.1", "id")?.to_owned(),
         })
     }
 

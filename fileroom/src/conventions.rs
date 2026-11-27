@@ -1,4 +1,4 @@
-//! The shared conventions every profile uses (CONVENTIONS §1 to §4):
+//! The shared conventions every profile uses (CONVENTIONS §1 to §3):
 //! identifiers, agents, hashes, dates and instants.
 //
 // Author: David M. Anderson
@@ -8,7 +8,7 @@ use std::fmt;
 use std::io::Read;
 
 use sha2::{Digest, Sha256};
-use slpc::toml_edit::{Datetime, InlineTable, Value};
+use slpc::toml_edit::Datetime;
 
 /// A UUID version 7 in the hyphenated lowercase form (CONVENTIONS §1).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -59,27 +59,7 @@ impl fmt::Display for Identifier {
     }
 }
 
-/// A person or system that did something (CONVENTIONS §2).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Agent {
-    /// The address external systems match on.
-    pub email: String,
-    /// A stable identifier from the organization's directory.
-    pub id: String,
-}
-
-impl Agent {
-    /// The inline table form an entry or a flyleaf carries.
-    #[must_use]
-    pub fn to_toml(&self) -> InlineTable {
-        let mut t = InlineTable::new();
-        t.insert("email", Value::from(self.email.as_str()));
-        t.insert("id", Value::from(self.id.as_str()));
-        t
-    }
-}
-
-/// A SHA-256 digest as 64 lowercase hexadecimal digits (CONVENTIONS §3).
+/// A SHA-256 digest as 64 lowercase hexadecimal digits (CONVENTIONS §2).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Hash(String);
 
@@ -148,7 +128,7 @@ impl fmt::Display for Hash {
     }
 }
 
-/// A civil calendar date (CONVENTIONS §4).
+/// A civil calendar date (CONVENTIONS §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Date {
     /// Four digits.
@@ -222,7 +202,7 @@ impl fmt::Display for Date {
     }
 }
 
-/// A point in time, in UTC (CONVENTIONS §4).
+/// A point in time, in UTC (CONVENTIONS §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instant {
     /// The UTC date.

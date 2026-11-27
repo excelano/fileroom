@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Barrier};
 
-use fileroom::conventions::{Agent, Date, Identifier, Instant};
+use fileroom::conventions::{Date, Identifier, Instant};
 use fileroom::dispose::{dispose, recover, Context, Plan, Recovery, Run};
 use fileroom::location::Mounts;
+use fileroom::records::Agent;
 use fileroom::records::Record;
 use fileroom::register::{Outcome, Register};
 use fileroom::schedule::{Schedule, Store, VersionId};

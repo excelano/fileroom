@@ -8,13 +8,33 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::{Read, Seek};
 
 use slpc::toml_edit::{
-    Array, ArrayOfTables, DocumentMut, Item, Table as TomlTable, TableLike, Value,
+    Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table as TomlTable, TableLike, Value,
 };
 use slpc::{Container, MemberError, Repack};
 
-use crate::conventions::{Agent, Date, Hash, Identifier, Instant};
+use crate::conventions::{Date, Hash, Identifier, Instant};
 use crate::keys::Keys;
 use crate::{Error, Malformed};
+
+/// An accountable person or system in the organization's directory (SPEC §1.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Agent {
+    /// The address external systems match on.
+    pub email: String,
+    /// A stable identifier from the organization's directory.
+    pub id: String,
+}
+
+impl Agent {
+    /// The inline table form an entry or a flyleaf carries.
+    #[must_use]
+    pub fn to_toml(&self) -> InlineTable {
+        let mut t = InlineTable::new();
+        t.insert("email", Value::from(self.email.as_str()));
+        t.insert("id", Value::from(self.id.as_str()));
+        t
+    }
+}
 
 /// The profile's identity (SPEC §1).
 pub const PROFILE: &str = "https://slipcaseformat.org/profiles/records";
@@ -137,8 +157,8 @@ pub struct Record {
     pub marking: Option<String>,
     /// The head of the event log.
     pub events_head: Hash,
-    /// Who created the content.
-    pub creator: Agent,
+    /// Who brought the container under management as a record.
+    pub captured_by: Agent,
     /// Who is responsible for the record now.
     pub custodian: Agent,
     /// The content file's hash (SPEC §2.3).
@@ -381,7 +401,7 @@ impl Record {
             r.insert("marking", string(m));
         }
         r.insert("events_head", string(self.events_head.as_str()));
-        r.insert("creator", agent_table(&self.creator));
+        r.insert("captured_by", agent_table(&self.captured_by));
         r.insert("custodian", agent_table(&self.custodian));
         let mut fixity = TomlTable::new();
         fixity.insert("content_sha256", string(self.content_sha256.as_str()));
@@ -622,7 +642,7 @@ fn read_record(k: &Keys<'_>) -> Result<Record, Malformed> {
         essential: k.boolean(RULE, "essential")?,
         marking: k.optional_string(RULE, "marking")?.map(str::to_owned),
         events_head: k.hash(RULE, "events_head")?,
-        creator: k.agent(RULE, "creator")?,
+        captured_by: k.agent(RULE, "captured_by")?,
         custodian: k.agent(RULE, "custodian")?,
         content_sha256: fixity.hash("2.3", "content_sha256")?,
         series: read_series(k)?,

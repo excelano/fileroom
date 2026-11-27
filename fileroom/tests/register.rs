@@ -8,7 +8,8 @@ use std::path::Path;
 use std::sync::{Arc, Barrier};
 
 use common::{examples, pack};
-use fileroom::conventions::{Agent, Date, Hash, Identifier, Instant};
+use fileroom::conventions::{Date, Hash, Identifier, Instant};
+use fileroom::records::Agent;
 use fileroom::register::{
     Completion, JournalEntry, Manifest, Outcome, Plan, Register, Row, MANIFEST_MEMBER,
 };

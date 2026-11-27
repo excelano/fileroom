@@ -12,9 +12,10 @@ use crate::demo::Language;
 use crate::rng::Rng;
 use crate::truth::{evaluate, Facts, SeriesFact, Truth};
 use clap::Parser;
-use fileroom::conventions::{Agent, Date, Hash, Identifier, Instant};
+use fileroom::conventions::{Date, Hash, Identifier, Instant};
 use fileroom::events::EventType;
 use fileroom::location::Location;
+use fileroom::records::Agent;
 use fileroom::register::{Completion, JournalEntry, Manifest, Outcome, Plan, Register, Row};
 use fileroom::schedule::{Schedule, Store};
 use fileroom::slpc::toml_edit::{DocumentMut, Item, Table, Value};
@@ -713,7 +714,7 @@ impl Gen {
             mime_type: "application/pdf".into(),
             essential: self.rng.chance(5),
             marking: self.rng.chance(10).then(|| "Confidential".to_owned()),
-            creator: p.agent.clone(),
+            captured_by: p.agent.clone(),
             custodian: p.agent.clone(),
             series: vec![SeriesEntry {
                 code: "C-CY3".into(),
