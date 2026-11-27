@@ -3,7 +3,7 @@
 This document is for an auditor or counsel asking how a record came to be
 destroyed under Slipcase Fileroom or the `fileroom` command. It describes what the `fileroom` crate does, which
 is the only code in the product that destroys anything. The normative rules
-are the [Slipcase Records Profile](https://github.com/excelano/slipcase-profiles/tree/main/records);
+are the [Slipcase Records Profile](https://slipcaseformat.org/profiles/records/);
 where this page and the specification differ, the specification is right
 and the code has a defect.
 

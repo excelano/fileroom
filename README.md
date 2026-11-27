@@ -2,7 +2,7 @@
 
 The open core of [Slipcase Fileroom](https://github.com/excelano/slipcase-fileroom): the
 `fileroom` crate and command implement the [Slipcase Records
-Profile](https://github.com/excelano/slipcase-profiles/tree/main/records),
+Profile](https://slipcaseformat.org/profiles/records/),
 so that a record's retention state, its history, and the disposition register
 can be read and verified by anyone, with no license and no vendor.
 
